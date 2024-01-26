@@ -1,29 +1,18 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_import_braces,
-    unused_macros,
-    unused_mut
-)]
-
 macro_rules! logln {
     ($($toks:tt)*) => {
         println!($($toks)*)
     };
 }
 
-mod network;
 mod proxy;
-mod reactor;
 
-use std::{io::ErrorKind, io::ErrorKind::WouldBlock, process::ExitCode};
+use std::process::ExitCode;
 
-use anyhow::{bail, Result as AResult};
-use argsplitter::{ArgError, ArgSplitter, ItemOs};
-use network::Listener;
+use anyhow::Result as AResult;
+use argsplitter::{ArgError, ArgSplitter};
+
+use proxy::network::Addr;
 use proxy::Proxy;
-
-use crate::{network::Addr, reactor::Reactor};
 
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR

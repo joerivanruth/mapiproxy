@@ -3,7 +3,6 @@ use std::{
     mem,
     net::{SocketAddr, ToSocketAddrs},
     ops::ControlFlow::{self, Break, Continue},
-    vec,
 };
 
 use mio::{
@@ -12,9 +11,7 @@ use mio::{
     Interest, Registry, Token,
 };
 
-use crate::{network::Addr, proxy::would_block};
-
-use super::{Error, Result};
+use super::{network::Addr, would_block, Error, Result};
 
 pub enum Forwarder {
     Connecting {
@@ -166,8 +163,8 @@ impl Forwarder {
             client.clear();
             server.clear();
 
-            progress |= downstream.handle1("downstream", server, client)?;
-            progress |= upstream.handle1("upstream", client, server)?;
+            progress |= downstream.handle_one("downstream", server, client)?;
+            progress |= upstream.handle_one("upstream", client, server)?;
             logln!(
                 "client interest {c:?}, server interest {s:?}",
                 c = client.needed,
@@ -184,7 +181,9 @@ impl Forwarder {
 
         let upstream_finished = upstream.finished();
         let downstream_finished = downstream.finished();
-        logln!("upstream finished = {upstream_finished}, downstream finished = {downstream_finished}");
+        logln!(
+            "upstream finished = {upstream_finished}, downstream finished = {downstream_finished}"
+        );
         if upstream_finished && downstream_finished {
             Ok(Break(()))
         } else {
@@ -214,7 +213,7 @@ impl Copying {
         }
     }
 
-    fn handle1(
+    fn handle_one(
         &mut self,
         direction: &str,
         rd: &mut Registered<TcpStream>,
@@ -379,7 +378,6 @@ impl<S: Source> Registered<S> {
     }
 }
 
-
 fn combine_interests(left: Option<Interest>, right: Option<Interest>) -> Option<Interest> {
     match (left, right) {
         (None, x) => x,
@@ -390,10 +388,9 @@ fn combine_interests(left: Option<Interest>, right: Option<Interest>) -> Option<
 
 #[test]
 fn test_interest_or() {
-    use std::ops::BitOr;
     let x = Some(Interest::READABLE);
     let y = Some(Interest::PRIORITY);
-    let z =combine_interests(x, y);
+    let z = combine_interests(x, y);
 
     assert_eq!(z, Some(Interest::READABLE | Interest::PRIORITY));
 }

@@ -1,25 +1,24 @@
 mod forward;
+pub mod network;
 
 use std::{
-    array, fmt, io,
+    io,
     net::{self, ToSocketAddrs},
     ops::ControlFlow,
 };
 
-use crate::{
-    network::Addr,
-    proxy::forward::Forwarder,
-    reactor::{Reactor, Registered},
-};
+use forward::Forwarder;
+use network::Addr;
 
 use mio::{
-    event::{Event, Source},
+    event::Event,
     net::{TcpListener, TcpStream},
     Events, Interest, Poll, Token,
 };
 use slab::Slab;
 use thiserror::Error as ThisError;
 
+#[allow(dead_code)]
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("Could not create mio poller: {0}")]
@@ -53,23 +52,19 @@ pub struct Proxy {
     listen_addr: Addr,
     forward_addr: Addr,
     poll: Poll,
-    token_counter: usize,
-    forward_token_start: usize,
+    token_base: usize,
     listeners: Vec<(String, TcpListener)>,
     forwarders: Slab<Forwarder>,
 }
 
 impl Proxy {
-    const TOKEN_BLOCK_SIZE: usize = 10;
-
     pub fn new(listen_addr: Addr, forward_addr: Addr) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
         let mut proxy = Proxy {
             listen_addr,
             forward_addr,
             poll,
-            token_counter: 0,
-            forward_token_start: usize::MAX,
+            token_base: usize::MAX,
             listeners: Default::default(),
             forwarders: Default::default(),
         };
@@ -91,8 +86,7 @@ impl Proxy {
         }
 
         let n = self.listeners.len();
-        self.token_counter = n;
-        self.forward_token_start = n;
+        self.token_base = n;
         Ok(())
     }
 
@@ -126,10 +120,10 @@ impl Proxy {
             logln!("  woke up with {n} events", n = events.iter().count());
             for ev in events.iter() {
                 let token = ev.token();
-                if token.0 < self.forward_token_start {
+                if token.0 < self.token_base {
                     self.handle_listener_event(token.0)?;
                 } else {
-                    self.handle_forward_event(ev, (token.0 - self.forward_token_start) / 2);
+                    self.handle_forward_event(ev, (token.0 - self.token_base) / 2);
                 }
             }
         }
@@ -138,7 +132,6 @@ impl Proxy {
     fn handle_listener_event(&mut self, n: usize) -> Result<()> {
         loop {
             let (local, listener) = &self.listeners[n];
-            let local = local.clone();
             let (conn, peer) = match listener.accept() {
                 Ok(x) => x,
                 Err(e) if would_block(&e) => return Ok(()),
@@ -148,6 +141,7 @@ impl Proxy {
             };
             logln!("New connection on {local} from {peer}");
             if let Err(e) = self.start_forwarder(peer.to_string(), conn) {
+                let local = &self.listeners[n].0;
                 logln!("Could not proxy connection on {local} from {peer}: {e}");
             }
         }
@@ -156,30 +150,18 @@ impl Proxy {
     fn start_forwarder(&mut self, peer: String, conn: TcpStream) -> Result<()> {
         let entry = self.forwarders.vacant_entry();
         let n = entry.key();
-        let start = self.forward_token_start;
-        let client_token = Token(start + 2 * n);
-        let server_token = Token(start + 2 * n + 1);
-        let fwd = Forwarder::new(
+        let client_token = self.token_base + 2 * n;
+        let server_token = self.token_base + 2 * n + 1;
+        let forwarder = Forwarder::new(
             self.poll.registry(),
             conn,
             peer,
-            client_token,
+            Token(client_token),
             &self.forward_addr,
-            server_token,
-        );
-        match fwd {
-            Ok(forwarder) => {
-                logln!(
-                    "Starting forwarder {n} [{c}, {s}]",
-                    c = client_token.0,
-                    s = server_token.0
-                );
-                entry.insert(forwarder);
-            }
-            Err(e) => {
-                logln!("{e}");
-            }
-        }
+            Token(server_token),
+        )?;
+        logln!("Starting forwarder {n} [{client_token}, {server_token}]");
+        entry.insert(forwarder);
         Ok(())
     }
 
@@ -192,59 +174,20 @@ impl Proxy {
 
         match fwd.handle_event(registry, ev) {
             Ok(ControlFlow::Continue(_)) => return,
-            Ok(ControlFlow::Break(_)) => {}
             Err(e) => {
                 logln!("Connection {n}: {e}");
             }
+            Ok(ControlFlow::Break(_)) => {
+                // do not report but fall through to removing it
+            }
         }
 
-        // if we get here the forwarder must be dropped
         logln!("Dropping connection {n}");
         fwd.deregister(registry);
         self.forwarders.remove(n);
     }
 }
 
-struct ShowEvent<'a>(&'a Event);
-
-impl fmt::Display for ShowEvent<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use fmt::Write;
-        let ev = self.0;
-        let mut s = String::with_capacity(12);
-        if ev.is_readable() {
-            s.push('R');
-        }
-        if ev.is_writable() {
-            s.push('W');
-        }
-        if ev.is_error() {
-            s.push('E');
-        }
-        if ev.is_read_closed() {
-            s.push_str("rc");
-        }
-        if ev.is_write_closed() {
-            s.push_str("wc");
-        }
-        if ev.is_priority() {
-            s.push('P');
-        }
-        if ev.is_aio() {
-            s.push('A');
-        }
-        if ev.is_lio() {
-            s.push('L');
-        }
-
-        write!(f, "Event({n}, {s:?})", n = ev.token().0)
-    }
-}
-
 fn would_block(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::WouldBlock
-}
-
-fn err_is_interrupted(err: &io::Error) -> bool {
-    err.kind() == io::ErrorKind::Interrupted
 }
