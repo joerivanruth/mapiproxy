@@ -1,19 +1,17 @@
+#![allow(dead_code)]
+
 use io::Error as IOError;
 use io::ErrorKind as Kind;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
-use std::future::Future;
+
 use std::net::Shutdown;
 use std::net::TcpListener;
 use std::net::TcpStream;
-use std::os::fd::AsRawFd;
-use std::os::fd::BorrowedFd;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::result;
-use std::{ffi::OsStr, io, net::ToSocketAddrs, path::PathBuf};
+use std::{ffi::OsStr, io, path::PathBuf};
 
 fn explain_io<T>(descr: &dyn fmt::Display, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     match f() {
