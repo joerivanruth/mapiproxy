@@ -1,3 +1,4 @@
+pub mod event;
 mod forward;
 pub mod network;
 
@@ -17,6 +18,8 @@ use mio::{
 };
 use slab::Slab;
 use thiserror::Error as ThisError;
+
+use self::event::{ConnectionId, EventSink};
 
 #[derive(Debug, ThisError)]
 pub enum Error {
@@ -48,53 +51,6 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-type Id = usize;
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Direction {
-    Upstream,
-    Downstream,
-}
-
-#[derive(Debug)]
-pub enum MapiEvent {
-    BoundPort(String),
-    Incoming {
-        id: Id,
-        local: String,
-        peer: String,
-    },
-    Connecting {
-        id: Id,
-        remote: String,
-    },
-    Connected {
-        id: Id,
-        peer: String,
-    },
-    End {
-        id: Id,
-    },
-    Aborted {
-        id: Id,
-        error: Error,
-    },
-    Data {
-        id: Id,
-        direction: Direction,
-        data: Vec<u8>,
-    },
-    ShutdownRead {
-        id: Id,
-        direction: Direction,
-    },
-    ShutdownWrite {
-        id: Id,
-        direction: Direction,
-        discard: usize,
-    },
-}
-
 pub struct Proxy {
     listen_addr: Addr,
     forward_addr: Addr,
@@ -104,94 +60,6 @@ pub struct Proxy {
     forwarders: Slab<Forwarder>,
     ids: RangeFrom<usize>,
     event_sink: EventSink,
-}
-
-pub struct EventSink(Box<dyn FnMut(MapiEvent)>);
-
-impl EventSink {
-    pub fn new(f: impl FnMut(MapiEvent) + 'static) -> Self {
-        EventSink(Box::new(f))
-    }
-
-    pub fn sub(&mut self, id: Id) -> ConnectionSink<'_> {
-        ConnectionSink::new(&mut *self, id)
-    }
-
-    fn emit_event(&mut self, event: MapiEvent) {
-        (self.0)(event)
-    }
-
-    pub fn emit_bound(&mut self, port: String) {
-        self.emit_event(MapiEvent::BoundPort(port))
-    }
-}
-
-pub struct ConnectionSink<'a>(&'a mut EventSink, Id);
-
-impl<'a> ConnectionSink<'a> {
-    pub fn new(event_sink: &'a mut EventSink, id: Id) -> Self {
-        ConnectionSink(event_sink, id)
-    }
-
-    pub fn id(&self) -> Id {
-        self.1
-    }
-
-    pub fn emit_incoming(&mut self, local: String, peer: String) {
-        self.0.emit_event(MapiEvent::Incoming {
-            id: self.id(),
-            local,
-            peer,
-        });
-    }
-
-    pub fn emit_connecting(&mut self, remote: String) {
-        self.0.emit_event(MapiEvent::Connecting {
-            id: self.id(),
-            remote,
-        });
-    }
-
-    pub fn emit_connected(&mut self, remote: String) {
-        self.0.emit_event(MapiEvent::Connected {
-            id: self.id(),
-            peer: remote,
-        });
-    }
-
-    pub fn emit_end(&mut self) {
-        self.0.emit_event(MapiEvent::End { id: self.id() });
-    }
-
-    pub fn emit_aborted(&mut self, error: Error) {
-        self.0.emit_event(MapiEvent::Aborted {
-            id: self.id(),
-            error,
-        });
-    }
-
-    pub fn emit_data(&mut self, direction: Direction, data: Vec<u8>) {
-        self.0.emit_event(MapiEvent::Data {
-            id: self.id(),
-            direction,
-            data,
-        })
-    }
-
-    pub fn emit_shutdown_read(&mut self, direction: Direction) {
-        self.0.emit_event(MapiEvent::ShutdownRead {
-            id: self.id(),
-            direction,
-        });
-    }
-
-    pub fn emit_shutdown_write(&mut self, direction: Direction, discard: usize) {
-        self.0.emit_event(MapiEvent::ShutdownWrite {
-            id: self.id(),
-            direction,
-            discard,
-        });
-    }
 }
 
 impl Proxy {
@@ -285,7 +153,7 @@ impl Proxy {
         }
     }
 
-    fn start_forwarder(&mut self, id: Id, peer: String, conn: TcpStream) {
+    fn start_forwarder(&mut self, id: ConnectionId, peer: String, conn: TcpStream) {
         let mut sink = self.event_sink.sub(id);
         let entry = self.forwarders.vacant_entry();
         let n = entry.key();
@@ -313,7 +181,7 @@ impl Proxy {
     fn handle_forward_event(&mut self, ev: &Event, n: usize) {
         let registry = self.poll.registry();
         let fwd = self.forwarders.get_mut(n).unwrap();
-        let id: Id = fwd.id();
+        let id = fwd.id();
         let mut sink = self.event_sink.sub(id);
 
         match fwd.handle_event(&mut sink, registry, ev) {

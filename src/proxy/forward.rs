@@ -10,9 +10,13 @@ use mio::{
     Interest, Registry, Token,
 };
 
-use super::{network::Addr, would_block, ConnectionSink, Direction, Error, Id, Result};
+use super::{
+    event::{ConnectionId, ConnectionSink, Direction},
+    network::Addr,
+    would_block, Error, Result,
+};
 
-pub struct Forwarder(Option<Forwarding>, Id);
+pub struct Forwarder(Option<Forwarding>, ConnectionId);
 
 #[derive(Debug)]
 enum Forwarding {
@@ -44,7 +48,7 @@ impl Forwarder {
         Ok(forwarder)
     }
 
-    pub fn id(&self) -> Id {
+    pub fn id(&self) -> ConnectionId {
         self.1
     }
 
