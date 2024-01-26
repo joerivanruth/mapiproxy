@@ -5,8 +5,9 @@ use std::process::ExitCode;
 use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
 
+use proxy::event::EventSink;
 use proxy::network::Addr;
-use proxy::{EventSink, Proxy};
+use proxy::Proxy;
 
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
