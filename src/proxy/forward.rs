@@ -1,6 +1,5 @@
 use std::{
     io::{self, ErrorKind, Read, Write},
-    mem,
     net::{SocketAddr, ToSocketAddrs},
     ops::ControlFlow::{self, Break, Continue},
 };
@@ -13,35 +12,81 @@ use mio::{
 
 use super::{network::Addr, would_block, Error, Result};
 
-pub enum Forwarder {
-    Connecting {
-        client: Registered<TcpStream>,
-        server: Registered<TcpStream>,
-    },
-    Running {
-        client: Registered<TcpStream>,
-        server: Registered<TcpStream>,
-        upstream: Copying,
-        downstream: Copying,
-    },
-    Dummy,
+pub struct Forwarder(Option<Forwarding>);
+
+#[derive(Debug)]
+enum Forwarding {
+    Connecting(Connecting),
+    Running(Running),
 }
 
 impl Forwarder {
     pub fn new(
         registry: &Registry,
-        client: TcpStream,
-        client_addr: String,
+        conn: TcpStream,
+        peer: String,
         client_token: Token,
-        server_addr: &Addr,
+        forward_addr: &Addr,
         server_token: Token,
     ) -> Result<Self> {
+        let connecting = Connecting::new(
+            forward_addr,
+            peer,
+            client_token,
+            conn,
+            server_token,
+            registry,
+        )?;
+        Ok(Forwarder(Some(Forwarding::Connecting(connecting))))
+    }
+
+    pub fn deregister(&mut self, registry: &Registry) {
+        match &mut self.0 {
+            Some(Forwarding::Connecting(c)) => c.deregister(registry),
+            Some(Forwarding::Running(r)) => r.deregister(registry),
+            None => {}
+        }
+    }
+
+    pub fn handle_event(&mut self, registry: &Registry, ev: &Event) -> Result<ControlFlow<()>> {
+        logln!("processing {ev:?}");
+
+        let old = self
+            .0
+            .take()
+            .expect("must have lost connection state earlier");
+        let handled: ControlFlow<(), Forwarding> = match old {
+            Forwarding::Connecting(c) => c.process(registry)?,
+            Forwarding::Running(r) => r.process(registry)?,
+        };
+        match handled {
+            Continue(forwarding) => {
+                self.0 = Some(forwarding);
+                Ok(Continue(()))
+            }
+            Break(()) => Ok(Break(())),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Connecting {
+    pub client: Registered<TcpStream>,
+    pub server: Registered<TcpStream>,
+}
+
+impl Connecting {
+    fn new(
+        server_addr: &Addr,
+        client_addr: String,
+        client_token: Token,
+        client: TcpStream,
+        server_token: Token,
+        registry: &Registry,
+    ) -> Result<Connecting> {
         let Addr::Tcp(server_addr) = server_addr else {
             return Err(Error::UnixDomain);
         };
-        // let server_addr = server_address.as_str();
-
-        // Wonder why mio doesn't offer a non-blocking name resolution API
         let addrs: Vec<SocketAddr> = server_addr
             .to_socket_addrs()
             .map_err(|e| Error::Connect(server_addr.to_string(), e))?
@@ -52,110 +97,86 @@ impl Forwarder {
             return Err(Error::Connect(server_addr.to_string(), e));
         }
         let addr = addrs[0];
-
         logln!("Trying to connect to {addr}");
-
         let conn =
             TcpStream::connect(addr).map_err(|e| Error::Connect(server_addr.to_string(), e))?;
-
         let client = Registered::new(client_addr, client_token, client);
         let mut server = Registered::new(server_addr.to_string(), server_token, conn);
-
-        // registration is the last thing we do so we don't have to undo it if any of the above failed.
         server.need(Some(Interest::WRITABLE));
         server
             .update_registration(registry)
             .map_err(|e| Error::Connect(server.name.clone(), e))?;
-
-        Ok(Forwarder::Connecting { client, server })
+        let connecting = Connecting { client, server };
+        Ok(connecting)
     }
 
-    pub fn deregister(&mut self, registry: &Registry) {
-        match self {
-            Forwarder::Connecting { client, server } => {
-                let _ = client.deregister(registry);
-                let _ = server.deregister(registry);
-            }
-            Forwarder::Running { client, server, .. } => {
-                let _ = client.deregister(registry);
-                let _ = server.deregister(registry);
-            }
-            Forwarder::Dummy => {}
-        }
+    fn deregister(&mut self, registry: &Registry) {
+        let _ = self.client.deregister(registry);
+        let _ = self.server.deregister(registry);
     }
 
-    pub fn handle_event(&mut self, registry: &Registry, event: &Event) -> Result<ControlFlow<()>> {
-        match self {
-            Forwarder::Connecting { .. } => self.handle_connecting(registry, event),
-            Forwarder::Running { .. } => self.handle_running(registry, event),
-            Forwarder::Dummy => Ok(Break(())),
-        }
-    }
-
-    fn handle_connecting(
-        &mut self,
-        registry: &Registry,
-        _event: &Event,
-    ) -> std::prelude::v1::Result<ControlFlow<()>, Error> {
-        let Forwarder::Connecting { server, .. } = self else {
-            panic!("only call this on connecting forwarders")
-        };
+    fn process(mut self, registry: &Registry) -> Result<ControlFlow<(), Forwarding>> {
+        let Connecting { server, .. } = &mut self;
 
         // If there's a true error, return it
-        if let Err(e) | Ok(Some(e)) = server.attempt(Interest::WRITABLE, |conn| conn.take_error()) {
+        let server_status = server.attempt(Interest::WRITABLE, |conn| conn.take_error());
+        if let Err(e) | Ok(Some(e)) = server_status {
             return Err(Error::Connect(server.name.clone(), e));
         }
 
         // Check peer_name to see if we're really connected.
-        match server.attempt(Interest::WRITABLE, |conn| conn.peer_addr()) {
-            Ok(_) => self.switch_to_running(registry),
-            Err(e) => match e.kind() {
-                ErrorKind::WouldBlock | ErrorKind::NotConnected => Ok(Continue(())),
-                _ => Err(Error::Connect(server.name.clone(), e)),
-            },
+        let err = match server.attempt(Interest::WRITABLE, |conn| conn.peer_addr()) {
+            Ok(_peer_name) => {
+                logln!("Connected to {remote}", remote = server.name.clone());
+                let running = Running::from(self);
+                return running.process(registry);
+            }
+            Err(e) => e,
+        };
+
+        // Some error kinds mean 'continue trying', others mean 'abort'.
+        if let ErrorKind::WouldBlock | ErrorKind::NotConnected = err.kind() {
+            let forwarding = Forwarding::Connecting(self);
+            Ok(Continue(forwarding))
+        } else {
+            Err(Error::Connect(server.name.clone(), err))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Running {
+    pub client: Registered<TcpStream>,
+    pub server: Registered<TcpStream>,
+    pub upstream: Copying,
+    pub downstream: Copying,
+}
+
+impl Running {
+    fn from(connecting: Connecting) -> Running {
+        let Connecting { client, server } = connecting;
+        let upstream = Copying::new();
+        let downstream = Copying::new();
+        Running {
+            client,
+            server,
+            upstream,
+            downstream,
         }
     }
 
-    fn switch_to_running(&mut self, registry: &Registry) -> Result<ControlFlow<()>> {
-        let upstream = Copying::new();
-        let downstream = Copying::new();
+    fn deregister(&mut self, registry: &Registry) {
+        let _ = self.client.deregister(registry);
+        let _ = self.server.deregister(registry);
+    }
 
-        // complicated dance to be able to replace self
-        let mut tmp = Forwarder::Dummy;
-        mem::swap(&mut tmp, self);
-        let Forwarder::Connecting { client, server } = tmp else {
-            panic!("only call this on connecting forwarders")
-        };
-
-        let remote = server.name.clone();
-
-        *self = Forwarder::Running {
+    fn process(mut self, registry: &Registry) -> Result<ControlFlow<(), Forwarding>> {
+        let Running {
             client,
             server,
             upstream,
             downstream,
-        };
-
-        logln!("Connected to {remote}");
-        // Process_running will set the registrations right
-        self.process_running(registry)
-    }
-
-    fn handle_running(&mut self, registry: &Registry, event: &Event) -> Result<ControlFlow<()>> {
-        logln!("processing {event:?}");
-        self.process_running(registry)
-    }
-
-    fn process_running(&mut self, registry: &Registry) -> Result<ControlFlow<()>> {
-        let Forwarder::Running {
-            client,
-            server,
-            upstream,
-            downstream,
-        } = self
-        else {
-            panic!("only call this on connecting forwarders")
-        };
+        } = &mut self;
 
         let mut progress = true;
         while progress {
@@ -179,19 +200,18 @@ impl Forwarder {
             .update_registration(registry)
             .map_err(Error::Forward)?;
 
-        let upstream_finished = upstream.finished();
-        let downstream_finished = downstream.finished();
-        logln!(
-            "upstream finished = {upstream_finished}, downstream finished = {downstream_finished}"
-        );
-        if upstream_finished && downstream_finished {
+        let uf = upstream.finished();
+        let df = downstream.finished();
+        logln!("upstream finished = {uf}, downstream finished = {df}");
+        if uf && df {
             Ok(Break(()))
         } else {
-            Ok(Continue(()))
+            Ok(Continue(Forwarding::Running(self)))
         }
     }
 }
 
+#[derive(Debug)]
 pub struct Copying {
     can_read: bool,
     can_write: bool,
@@ -307,6 +327,7 @@ impl Copying {
     }
 }
 
+#[derive(Debug)]
 pub struct Registered<S: Source> {
     name: String,
 

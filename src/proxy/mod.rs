@@ -18,7 +18,6 @@ use mio::{
 use slab::Slab;
 use thiserror::Error as ThisError;
 
-#[allow(dead_code)]
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("Could not create mio poller: {0}")]
@@ -42,6 +41,7 @@ pub enum Error {
     #[error("Unix domain sockets are not supported yet")]
     UnixDomain,
 
+    #[allow(dead_code)]
     #[error("{0}")]
     Other(String),
 }
