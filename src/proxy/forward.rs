@@ -1,8 +1,9 @@
 use std::{
     io::{self, ErrorKind, Read, Write},
-    mem,
+    mem::{self, ManuallyDrop, MaybeUninit},
     net::{SocketAddr, ToSocketAddrs},
     ops::ControlFlow::{self, Break, Continue},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     vec,
 };
 
@@ -146,6 +147,11 @@ impl Forwarder {
 
     fn handle_running(&mut self, registry: &Registry, event: &Event) -> Result<ControlFlow<()>> {
         logln!("processing {event:?}");
+        if event.is_priority() {
+            if let Forwarder::Running { upstream, .. } = self {
+                upstream.try_oob = true;
+            }
+        }
         self.process_running(registry)
     }
 
@@ -166,8 +172,8 @@ impl Forwarder {
             client.clear();
             server.clear();
 
-            progress |= downstream.handle1("downstream", server, client)?;
-            progress |= upstream.handle1("upstream", client, server)?;
+            progress |= downstream.handle_one("downstream", server, client)?;
+            progress |= upstream.handle_one("upstream", client, server)?;
             logln!(
                 "client interest {c:?}, server interest {s:?}",
                 c = client.needed,
@@ -184,7 +190,9 @@ impl Forwarder {
 
         let upstream_finished = upstream.finished();
         let downstream_finished = downstream.finished();
-        logln!("upstream finished = {upstream_finished}, downstream finished = {downstream_finished}");
+        logln!(
+            "upstream finished = {upstream_finished}, downstream finished = {downstream_finished}"
+        );
         if upstream_finished && downstream_finished {
             Ok(Break(()))
         } else {
@@ -197,6 +205,7 @@ pub struct Copying {
     can_read: bool,
     can_write: bool,
     buffer: Box<[u8; Self::BUFSIZE]>,
+    try_oob: bool,
     unsent_data: usize,
     free_space: usize,
 }
@@ -209,12 +218,13 @@ impl Copying {
             can_read: true,
             can_write: true,
             buffer: Box::new([0; Self::BUFSIZE]),
+            try_oob: false,
             unsent_data: 0,
             free_space: 0,
         }
     }
 
-    fn handle1(
+    fn handle_one(
         &mut self,
         direction: &str,
         rd: &mut Registered<TcpStream>,
@@ -225,6 +235,8 @@ impl Copying {
         assert!(self.unsent_data == self.free_space || self.can_write);
 
         let mut progress = false;
+
+        progress |= self.handle_oob(rd, wr)?;
 
         logln!(
             "{direction}: can_read={r} can_write={w}    0 ≤ {unsent} ≤ {free} ≤ {size}",
@@ -299,12 +311,59 @@ impl Copying {
             }
         }
 
+        rd.need(Some(Interest::PRIORITY));
+
         logln!("  progress is {progress:?}");
         Ok(progress)
     }
 
     fn finished(&self) -> bool {
         !self.can_read && !self.can_write
+    }
+
+    fn handle_oob(
+        &mut self,
+        rd: &mut Registered<TcpStream>,
+        wr: &mut Registered<TcpStream>,
+    ) -> Result<bool> {
+        let mut buf = [MaybeUninit::uninit()];
+        let mut progress = false;
+
+        if !self.try_oob {
+            return Ok(false);
+        }
+        self.try_oob = false;
+
+        loop {
+            let read = unsafe { rd.with_socket2(|s| s.recv_out_of_band(&mut buf)) };
+            let oob_message = match read {
+                Ok(1) => unsafe { buf[0].assume_init() },
+                Ok(0) => break,
+                Err(e) if would_block(&e) => break,
+                Err(e) if e.kind() == ErrorKind::InvalidInput => /* this happens on linux */ break,
+                Err(e) => { dbg!(&e); return Err(Error::Oob("recv", e)) },
+                Ok(n) => panic!("recv_out_of_band returned too much: {n}"),
+            };
+
+            logln!("Received OOB: {oob_message}");
+
+            let wrote = unsafe { wr.with_socket2(|s| s.send_out_of_band(&[oob_message])) };
+            match wrote {
+                Ok(1) => {
+                    logln!("Sent OOB: {oob_message}");
+                    progress = true
+                }
+                Err(e) => return Err(Error::Oob("send", e)),
+                Ok(n) => {
+                    let msg = format!("expected send_out_of_band to return 1, not {n}");
+                    let err = io::Error::new(ErrorKind::Other, msg);
+                    return Err(Error::Oob("send", err));
+                }
+            }
+
+        }
+
+        Ok(progress)
     }
 }
 
@@ -379,6 +438,16 @@ impl<S: Source> Registered<S> {
     }
 }
 
+impl<S: Source + AsRawFd> Registered<S> {
+    unsafe fn with_socket2<T, F>(&mut self, f: F) -> io::Result<T>
+    where
+        F: FnOnce(&mut socket2::Socket) -> io::Result<T>,
+    {
+        let fd = self.source.as_raw_fd();
+        let mut sock = ManuallyDrop::new(socket2::Socket::from_raw_fd(fd));
+        f(&mut sock)
+    }
+}
 
 fn combine_interests(left: Option<Interest>, right: Option<Interest>) -> Option<Interest> {
     match (left, right) {
@@ -393,7 +462,7 @@ fn test_interest_or() {
     use std::ops::BitOr;
     let x = Some(Interest::READABLE);
     let y = Some(Interest::PRIORITY);
-    let z =combine_interests(x, y);
+    let z = combine_interests(x, y);
 
     assert_eq!(z, Some(Interest::READABLE | Interest::PRIORITY));
 }

@@ -40,6 +40,9 @@ pub enum Error {
     #[error("forward: {0}")]
     Forward(io::Error),
 
+    #[error("could not {0} OOB: {1}")]
+    Oob(&'static str, io::Error),
+
     #[error("Unix domain sockets are not supported yet")]
     UnixDomain,
 

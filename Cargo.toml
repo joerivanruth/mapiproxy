@@ -10,6 +10,7 @@ anyhow = "1.0.79"
 argsplitter = "0.4.0"
 mio = { version = "0.8.10", features = [ "net", "os-ext", "os-poll" ] }
 slab = "0.4.9"
+socket2 = "0.5.5"
 thiserror = "1.0.56"
 
 
