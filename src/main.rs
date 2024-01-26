@@ -1,9 +1,3 @@
-macro_rules! logln {
-    ($($toks:tt)*) => {
-        println!($($toks)*)
-    };
-}
-
 mod proxy;
 
 use std::process::ExitCode;
@@ -12,7 +6,7 @@ use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
 
 use proxy::network::Addr;
-use proxy::Proxy;
+use proxy::{EventSink, Proxy};
 
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
@@ -61,7 +55,8 @@ fn mymain() -> AResult<()> {
     let forward_addr: Addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
 
-    let mut proxy = Proxy::new(listen_addr, forward_addr)?;
+    let sink = EventSink::new(|event| println!("{event:?}"));
+    let mut proxy = Proxy::new(listen_addr, forward_addr, sink)?;
 
     proxy.run()?;
 
