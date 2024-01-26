@@ -10,9 +10,9 @@ use mio::{
     Interest, Registry, Token,
 };
 
-use super::{network::Addr, would_block, Error, Result};
+use super::{network::Addr, would_block, ConnectionSink, Direction, Error, Id, Result};
 
-pub struct Forwarder(Option<Forwarding>);
+pub struct Forwarder(Option<Forwarding>, Id);
 
 #[derive(Debug)]
 enum Forwarding {
@@ -23,6 +23,7 @@ enum Forwarding {
 impl Forwarder {
     pub fn new(
         registry: &Registry,
+        event_sink: &mut ConnectionSink,
         conn: TcpStream,
         peer: String,
         client_token: Token,
@@ -30,6 +31,7 @@ impl Forwarder {
         server_token: Token,
     ) -> Result<Self> {
         let connecting = Connecting::new(
+            event_sink,
             forward_addr,
             peer,
             client_token,
@@ -37,7 +39,13 @@ impl Forwarder {
             server_token,
             registry,
         )?;
-        Ok(Forwarder(Some(Forwarding::Connecting(connecting))))
+        let forwarding = Forwarding::Connecting(connecting);
+        let forwarder = Forwarder(Some(forwarding), event_sink.id());
+        Ok(forwarder)
+    }
+
+    pub fn id(&self) -> Id {
+        self.1
     }
 
     pub fn deregister(&mut self, registry: &Registry) {
@@ -48,16 +56,16 @@ impl Forwarder {
         }
     }
 
-    pub fn handle_event(&mut self, registry: &Registry, ev: &Event) -> Result<ControlFlow<()>> {
-        logln!("processing {ev:?}");
-
-        let old = self
-            .0
-            .take()
-            .expect("must have lost connection state earlier");
+    pub fn handle_event(
+        &mut self,
+        sink: &mut ConnectionSink,
+        registry: &Registry,
+        _ev: &Event,
+    ) -> Result<ControlFlow<()>> {
+        let old = self.0.take().unwrap();
         let handled: ControlFlow<(), Forwarding> = match old {
-            Forwarding::Connecting(c) => c.process(registry)?,
-            Forwarding::Running(r) => r.process(registry)?,
+            Forwarding::Connecting(c) => c.process(sink, registry)?,
+            Forwarding::Running(r) => r.process(sink, registry)?,
         };
         match handled {
             Continue(forwarding) => {
@@ -71,12 +79,13 @@ impl Forwarder {
 
 #[derive(Debug)]
 struct Connecting {
-    pub client: Registered<TcpStream>,
-    pub server: Registered<TcpStream>,
+    client: Registered<TcpStream>,
+    server: Registered<TcpStream>,
 }
 
 impl Connecting {
     fn new(
+        event_sink: &mut ConnectionSink,
         server_addr: &Addr,
         client_addr: String,
         client_token: Token,
@@ -96,10 +105,13 @@ impl Connecting {
             let e = io::Error::new(ErrorKind::NotFound, msg);
             return Err(Error::Connect(server_addr.to_string(), e));
         }
+
+        // TODO: Should really connect to all of them
         let addr = addrs[0];
-        logln!("Trying to connect to {addr}");
+        event_sink.emit_connecting(addr.to_string());
         let conn =
             TcpStream::connect(addr).map_err(|e| Error::Connect(server_addr.to_string(), e))?;
+
         let client = Registered::new(client_addr, client_token, client);
         let mut server = Registered::new(server_addr.to_string(), server_token, conn);
         server.need(Some(Interest::WRITABLE));
@@ -115,7 +127,11 @@ impl Connecting {
         let _ = self.server.deregister(registry);
     }
 
-    fn process(mut self, registry: &Registry) -> Result<ControlFlow<(), Forwarding>> {
+    fn process(
+        mut self,
+        sink: &mut ConnectionSink,
+        registry: &Registry,
+    ) -> Result<ControlFlow<(), Forwarding>> {
         let Connecting { server, .. } = &mut self;
 
         // If there's a true error, return it
@@ -126,10 +142,10 @@ impl Connecting {
 
         // Check peer_name to see if we're really connected.
         let err = match server.attempt(Interest::WRITABLE, |conn| conn.peer_addr()) {
-            Ok(_peer_name) => {
-                logln!("Connected to {remote}", remote = server.name.clone());
+            Ok(peer_name) => {
+                sink.emit_connected(peer_name.to_string());
                 let running = Running::from(self);
-                return running.process(registry);
+                return running.process(sink, registry);
             }
             Err(e) => e,
         };
@@ -146,10 +162,10 @@ impl Connecting {
 
 #[derive(Debug)]
 struct Running {
-    pub client: Registered<TcpStream>,
-    pub server: Registered<TcpStream>,
-    pub upstream: Copying,
-    pub downstream: Copying,
+    client: Registered<TcpStream>,
+    server: Registered<TcpStream>,
+    upstream: Copying,
+    downstream: Copying,
 }
 
 impl Running {
@@ -170,7 +186,11 @@ impl Running {
         let _ = self.server.deregister(registry);
     }
 
-    fn process(mut self, registry: &Registry) -> Result<ControlFlow<(), Forwarding>> {
+    fn process(
+        mut self,
+        sink: &mut ConnectionSink,
+        registry: &Registry,
+    ) -> Result<ControlFlow<(), Forwarding>> {
         let Running {
             client,
             server,
@@ -184,13 +204,8 @@ impl Running {
             client.clear();
             server.clear();
 
-            progress |= downstream.handle_one("downstream", server, client)?;
-            progress |= upstream.handle_one("upstream", client, server)?;
-            logln!(
-                "client interest {c:?}, server interest {s:?}",
-                c = client.needed,
-                s = server.needed,
-            );
+            progress |= downstream.handle_one(Direction::Downstream, sink, server, client)?;
+            progress |= upstream.handle_one(Direction::Upstream, sink, client, server)?;
         }
 
         client
@@ -200,10 +215,7 @@ impl Running {
             .update_registration(registry)
             .map_err(Error::Forward)?;
 
-        let uf = upstream.finished();
-        let df = downstream.finished();
-        logln!("upstream finished = {uf}, downstream finished = {df}");
-        if uf && df {
+        if upstream.finished() && downstream.finished() {
             Ok(Break(()))
         } else {
             Ok(Continue(Forwarding::Running(self)))
@@ -235,7 +247,8 @@ impl Copying {
 
     fn handle_one(
         &mut self,
-        direction: &str,
+        direction: Direction,
+        sink: &mut ConnectionSink,
         rd: &mut Registered<TcpStream>,
         wr: &mut Registered<TcpStream>,
     ) -> Result<bool> {
@@ -245,31 +258,22 @@ impl Copying {
 
         let mut progress = false;
 
-        logln!(
-            "{direction}: can_read={r} can_write={w}    0 ≤ {unsent} ≤ {free} ≤ {size}",
-            r = self.can_read,
-            w = self.can_write,
-            unsent = self.unsent_data,
-            free = self.free_space,
-            size = Self::BUFSIZE,
-        );
         let to_write = &self.buffer[self.unsent_data..self.free_space];
         if !to_write.is_empty() {
             assert!(self.can_write);
-            logln!("  trying to write");
             match wr.attempt(Interest::WRITABLE, |w| w.write(to_write)) {
                 Ok(n @ 1..) => {
                     progress = true;
                     self.unsent_data += n;
-                    logln!("  sent {n} bytes");
                 }
                 Ok(0) => {
                     // eof
                     progress = true;
                     let n = self.free_space - self.unsent_data;
-                    logln!("  can no longer write, discarding {n} bytes");
+                    sink.emit_shutdown_write(direction, n);
                     self.unsent_data = self.free_space;
                     self.can_write = false;
+                    let _ = wr.source.shutdown(std::net::Shutdown::Write);
                 }
                 Err(e) if would_block(&e) => {
                     // don't touch progress
@@ -283,33 +287,33 @@ impl Copying {
             self.free_space = 0;
             if self.can_write && !self.can_read {
                 // no data in the buffer and no option to get more
-                logln!("  shutting down writes");
+                sink.emit_shutdown_write(direction, 0);
                 self.can_write = false;
                 let _ = wr.source.shutdown(std::net::Shutdown::Write);
             }
             if self.can_read && !self.can_write {
-                logln!("  shutting down reads");
+                sink.emit_shutdown_read(direction);
                 self.can_read = false;
                 let _ = rd.source.shutdown(std::net::Shutdown::Read);
             }
         }
 
         if self.can_read && self.can_write && self.free_space < Self::BUFSIZE {
-            logln!("  trying to read");
             let dest = &mut self.buffer[self.free_space..];
             match rd.attempt(Interest::READABLE, |r| r.read(dest)) {
                 Ok(n @ 1..) => {
                     let data = &dest[..n];
-                    let data = String::from_utf8_lossy(data);
-                    logln!("  received {n} bytes: {data:?}");
+                    sink.emit_data(direction, data.to_vec());
                     progress = true;
                     self.free_space += n;
                 }
                 Ok(0) => {
                     // eof
-                    logln!("  received eof");
+                    sink.emit_data(direction, vec![]);
                     progress = true;
+                    sink.emit_shutdown_read(direction);
                     self.can_read = false;
+                    let _ = rd.source.shutdown(std::net::Shutdown::Read);
                 }
                 Err(e) if would_block(&e) => {
                     // don't touch progress
@@ -318,7 +322,6 @@ impl Copying {
             }
         }
 
-        logln!("  progress is {progress:?}");
         Ok(progress)
     }
 

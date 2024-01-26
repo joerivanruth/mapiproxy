@@ -4,7 +4,7 @@ pub mod network;
 use std::{
     io,
     net::{self, ToSocketAddrs},
-    ops::ControlFlow,
+    ops::{ControlFlow, RangeFrom},
 };
 
 use forward::Forwarder;
@@ -48,6 +48,53 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+type Id = usize;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Direction {
+    Upstream,
+    Downstream,
+}
+
+#[derive(Debug)]
+pub enum MapiEvent {
+    BoundPort(String),
+    Incoming {
+        id: Id,
+        local: String,
+        peer: String,
+    },
+    Connecting {
+        id: Id,
+        remote: String,
+    },
+    Connected {
+        id: Id,
+        peer: String,
+    },
+    End {
+        id: Id,
+    },
+    Aborted {
+        id: Id,
+        error: Error,
+    },
+    Data {
+        id: Id,
+        direction: Direction,
+        data: Vec<u8>,
+    },
+    ShutdownRead {
+        id: Id,
+        direction: Direction,
+    },
+    ShutdownWrite {
+        id: Id,
+        direction: Direction,
+        discard: usize,
+    },
+}
+
 pub struct Proxy {
     listen_addr: Addr,
     forward_addr: Addr,
@@ -55,10 +102,100 @@ pub struct Proxy {
     token_base: usize,
     listeners: Vec<(String, TcpListener)>,
     forwarders: Slab<Forwarder>,
+    ids: RangeFrom<usize>,
+    event_sink: EventSink,
+}
+
+pub struct EventSink(Box<dyn FnMut(MapiEvent)>);
+
+impl EventSink {
+    pub fn new(f: impl FnMut(MapiEvent) + 'static) -> Self {
+        EventSink(Box::new(f))
+    }
+
+    pub fn sub(&mut self, id: Id) -> ConnectionSink<'_> {
+        ConnectionSink::new(&mut *self, id)
+    }
+
+    fn emit_event(&mut self, event: MapiEvent) {
+        (self.0)(event)
+    }
+
+    pub fn emit_bound(&mut self, port: String) {
+        self.emit_event(MapiEvent::BoundPort(port))
+    }
+}
+
+pub struct ConnectionSink<'a>(&'a mut EventSink, Id);
+
+impl<'a> ConnectionSink<'a> {
+    pub fn new(event_sink: &'a mut EventSink, id: Id) -> Self {
+        ConnectionSink(event_sink, id)
+    }
+
+    pub fn id(&self) -> Id {
+        self.1
+    }
+
+    pub fn emit_incoming(&mut self, local: String, peer: String) {
+        self.0.emit_event(MapiEvent::Incoming {
+            id: self.id(),
+            local,
+            peer,
+        });
+    }
+
+    pub fn emit_connecting(&mut self, remote: String) {
+        self.0.emit_event(MapiEvent::Connecting {
+            id: self.id(),
+            remote,
+        });
+    }
+
+    pub fn emit_connected(&mut self, remote: String) {
+        self.0.emit_event(MapiEvent::Connected {
+            id: self.id(),
+            peer: remote,
+        });
+    }
+
+    pub fn emit_end(&mut self) {
+        self.0.emit_event(MapiEvent::End { id: self.id() });
+    }
+
+    pub fn emit_aborted(&mut self, error: Error) {
+        self.0.emit_event(MapiEvent::Aborted {
+            id: self.id(),
+            error,
+        });
+    }
+
+    pub fn emit_data(&mut self, direction: Direction, data: Vec<u8>) {
+        self.0.emit_event(MapiEvent::Data {
+            id: self.id(),
+            direction,
+            data,
+        })
+    }
+
+    pub fn emit_shutdown_read(&mut self, direction: Direction) {
+        self.0.emit_event(MapiEvent::ShutdownRead {
+            id: self.id(),
+            direction,
+        });
+    }
+
+    pub fn emit_shutdown_write(&mut self, direction: Direction, discard: usize) {
+        self.0.emit_event(MapiEvent::ShutdownWrite {
+            id: self.id(),
+            direction,
+            discard,
+        });
+    }
 }
 
 impl Proxy {
-    pub fn new(listen_addr: Addr, forward_addr: Addr) -> Result<Proxy> {
+    pub fn new(listen_addr: Addr, forward_addr: Addr, event_sink: EventSink) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
         let mut proxy = Proxy {
             listen_addr,
@@ -67,6 +204,8 @@ impl Proxy {
             token_base: usize::MAX,
             listeners: Default::default(),
             forwarders: Default::default(),
+            ids: 10..,
+            event_sink,
         };
 
         proxy.add_listeners()?;
@@ -103,7 +242,7 @@ impl Proxy {
             .map_err(|e| Error::StartListening(addr.to_string(), e))?;
 
         let addr = addr.to_string();
-        logln!("Bound {addr}     // {token:?} -> ({:?})", tcp_listener);
+        self.event_sink.emit_bound(addr.clone());
         self.listeners.push((addr, tcp_listener));
 
         Ok(())
@@ -111,13 +250,10 @@ impl Proxy {
 
     pub fn run(&mut self) -> Result<Proxy> {
         let mut events = Events::with_capacity(20);
-        let mut i = 0u64;
+        let mut _i = 0u64;
         loop {
-            i += 1;
-            logln!("");
-            logln!("▶ start event loop iteration {i}");
+            _i += 1;
             self.poll.poll(&mut events, None).map_err(Error::Poll)?;
-            logln!("  woke up with {n} events", n = events.iter().count());
             for ev in events.iter() {
                 let token = ev.token();
                 if token.0 < self.token_base {
@@ -139,50 +275,63 @@ impl Proxy {
                     return Err(Error::Accept(local.clone(), e));
                 }
             };
-            logln!("New connection on {local} from {peer}");
-            if let Err(e) = self.start_forwarder(peer.to_string(), conn) {
-                let local = &self.listeners[n].0;
-                logln!("Could not proxy connection on {local} from {peer}: {e}");
-            }
+            let peer = peer.to_string();
+
+            let id = self.ids.next().unwrap();
+            self.event_sink
+                .sub(id)
+                .emit_incoming(local.clone(), peer.clone());
+            self.start_forwarder(id, peer.to_string(), conn);
         }
     }
 
-    fn start_forwarder(&mut self, peer: String, conn: TcpStream) -> Result<()> {
+    fn start_forwarder(&mut self, id: Id, peer: String, conn: TcpStream) {
+        let mut sink = self.event_sink.sub(id);
         let entry = self.forwarders.vacant_entry();
         let n = entry.key();
         let client_token = self.token_base + 2 * n;
         let server_token = self.token_base + 2 * n + 1;
-        let forwarder = Forwarder::new(
+        let new = Forwarder::new(
             self.poll.registry(),
+            &mut sink,
             conn,
             peer,
             Token(client_token),
             &self.forward_addr,
             Token(server_token),
-        )?;
-        logln!("Starting forwarder {n} [{client_token}, {server_token}]");
-        entry.insert(forwarder);
-        Ok(())
+        );
+        match new {
+            Ok(forwarder) => {
+                entry.insert(forwarder);
+            }
+            Err(e) => {
+                sink.emit_aborted(e);
+            }
+        }
     }
 
     fn handle_forward_event(&mut self, ev: &Event, n: usize) {
-        let Proxy {
-            poll, forwarders, ..
-        } = self;
-        let registry = poll.registry();
-        let fwd = forwarders.get_mut(n).unwrap();
+        let registry = self.poll.registry();
+        let fwd = self.forwarders.get_mut(n).unwrap();
+        let id: Id = fwd.id();
+        let mut sink = self.event_sink.sub(id);
 
-        match fwd.handle_event(registry, ev) {
-            Ok(ControlFlow::Continue(_)) => return,
+        match fwd.handle_event(&mut sink, registry, ev) {
+            Ok(ControlFlow::Continue(_)) => {
+                // return instead of removing it
+                return;
+            }
             Err(e) => {
-                logln!("Connection {n}: {e}");
+                sink.emit_aborted(e);
+                // fall through to removal
             }
             Ok(ControlFlow::Break(_)) => {
-                // do not report but fall through to removing it
+                sink.emit_end();
+                // fall through to removal
             }
         }
 
-        logln!("Dropping connection {n}");
+        // Removal
         fwd.deregister(registry);
         self.forwarders.remove(n);
     }
