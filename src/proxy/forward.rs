@@ -280,7 +280,9 @@ impl Copying {
             let dest = &mut self.buffer[self.free_space..];
             match rd.attempt(Interest::READABLE, |r| r.read(dest)) {
                 Ok(n @ 1..) => {
-                    logln!("  received {n} bytes");
+                    let data = &dest[..n];
+                    let data = String::from_utf8_lossy(data);
+                    logln!("  received {n} bytes: {data:?}");
                     progress = true;
                     self.free_space += n;
                 }
@@ -337,18 +339,7 @@ impl<S: Source> Registered<S> {
     }
 
     fn need(&mut self, interests: Option<Interest>) {
-        self.needed = self.needed.or(interests);
-    }
-
-    fn dont_need(&mut self, interests: Option<Interest>) {
-        // if interests is empty we don't need to do anything
-        let Some(interests) = interests else {
-            return;
-        };
-
-        if let Some(needed) = &mut self.needed {
-            self.needed = needed.remove(interests);
-        }
+        self.needed = combine_interests(self.needed, interests);
     }
 
     fn attempt<T>(
@@ -386,4 +377,23 @@ impl<S: Source> Registered<S> {
         self.clear();
         self.update_registration(registry)
     }
+}
+
+
+fn combine_interests(left: Option<Interest>, right: Option<Interest>) -> Option<Interest> {
+    match (left, right) {
+        (None, x) => x,
+        (y, None) => y,
+        (Some(x), Some(y)) => Some(x | y),
+    }
+}
+
+#[test]
+fn test_interest_or() {
+    use std::ops::BitOr;
+    let x = Some(Interest::READABLE);
+    let y = Some(Interest::PRIORITY);
+    let z =combine_interests(x, y);
+
+    assert_eq!(z, Some(Interest::READABLE | Interest::PRIORITY));
 }
