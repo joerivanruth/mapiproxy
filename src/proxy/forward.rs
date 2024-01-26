@@ -24,7 +24,7 @@ pub enum Forwarder {
         upstream: Copying,
         downstream: Copying,
     },
-    Dead,
+    Dummy,
 }
 
 impl Forwarder {
@@ -80,7 +80,7 @@ impl Forwarder {
                 let _ = client.deregister(registry);
                 let _ = server.deregister(registry);
             }
-            Forwarder::Dead => {}
+            Forwarder::Dummy => {}
         }
     }
 
@@ -88,7 +88,7 @@ impl Forwarder {
         match self {
             Forwarder::Connecting { .. } => self.handle_connecting(registry, event),
             Forwarder::Running { .. } => self.handle_running(registry, event),
-            Forwarder::Dead => Ok(Break(())),
+            Forwarder::Dummy => Ok(Break(())),
         }
     }
 
@@ -121,7 +121,7 @@ impl Forwarder {
         let downstream = Copying::new();
 
         // complicated dance to be able to replace self
-        let mut tmp = Forwarder::Dead;
+        let mut tmp = Forwarder::Dummy;
         mem::swap(&mut tmp, self);
         let Forwarder::Connecting { client, server } = tmp else {
             panic!("only call this on connecting forwarders")
