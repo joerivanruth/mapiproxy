@@ -1,6 +1,10 @@
+mod mapi;
 mod proxy;
+mod render;
 
+use std::panic::PanicInfo;
 use std::process::ExitCode;
+use std::{io, panic, process, thread};
 
 use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
@@ -8,6 +12,9 @@ use argsplitter::{ArgError, ArgSplitter};
 use proxy::event::EventSink;
 use proxy::network::Addr;
 use proxy::Proxy;
+use render::Renderer;
+
+use crate::proxy::event::MapiEvent;
 
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
@@ -35,16 +42,18 @@ fn main() -> ExitCode {
 }
 
 fn mymain() -> AResult<()> {
-    let mut _level = Level::Messages;
-    let mut _force_binary = false;
+    install_panic_hook();
+
+    let mut level = Level::Blocks;
+    let mut force_binary = false;
 
     let mut args = ArgSplitter::from_env();
     while let Some(flag) = args.flag()? {
         match flag {
-            "-m" | "--messages" => _level = Level::Messages,
-            "-b" | "--blocks" => _level = Level::Blocks,
-            "-r" | "--raw" => _level = Level::Raw,
-            "-B" | "--binary" => _force_binary = true,
+            "-m" | "--messages" => level = Level::Messages,
+            "-b" | "--blocks" => level = Level::Blocks,
+            "-r" | "--raw" => level = Level::Raw,
+            "-B" | "--binary" => force_binary = true,
             "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -56,10 +65,70 @@ fn mymain() -> AResult<()> {
     let forward_addr: Addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
 
-    let sink = EventSink::new(|event| println!("{event:?}"));
-    let mut proxy = Proxy::new(listen_addr, forward_addr, sink)?;
+    let mut renderer = Renderer::new(io::stdout());
 
-    proxy.run()?;
+    let (send_events, receive_events) = std::sync::mpsc::sync_channel(20);
+    let sink = EventSink::new(move |event| {
+        let _ = send_events.send(event);
+    });
+    let mut proxy = Proxy::new(listen_addr, forward_addr, sink)?;
+    thread::spawn(move || proxy.run().unwrap());
+
+    let renderer: &mut Renderer = &mut renderer;
+    let mut state = mapi::State::new(level, force_binary);
+    loop {
+        let ev = receive_events.recv()?;
+        state.handle(&ev, renderer)?;
+    }
+}
+
+fn install_panic_hook() {
+    let orig_hook = panic::take_hook();
+    let my_hook = Box::new(move |panic_info: &PanicInfo<'_>| {
+        orig_hook(panic_info);
+        process::exit(1);
+    });
+    panic::set_hook(my_hook);
+}
+
+#[allow(dead_code)]
+fn print_nondata_event(renderer: &mut Renderer, ev: &MapiEvent) -> AResult<()> {
+    use MapiEvent::*;
+    match ev {
+        BoundPort(port) => 
+            renderer.message(None, None, format_args!("LISTEN on port {port}"))?,
+        Incoming { id, local, peer } => renderer.message(
+            Some(*id),
+            None,
+            format_args!("INCOMING on {local} from {peer}"),
+        )?,
+        Connecting { id, remote } => {
+            renderer.message(Some(*id), None, format_args!("CONNECTING to {remote}"))?
+        }
+        Connected { id, .. } => renderer.message(Some(*id), None, "CONNECTED")?,
+        End { id } => renderer.message(Some(*id), None, "ENDED")?,
+        Aborted { id, error } => {
+            renderer.message(Some(*id), None, format_args!("ABORTED: {error}"))?
+        }
+        Data { .. } => {}
+        ShutdownRead { id, direction } => {
+            renderer.message(Some(*id), Some(*direction), "shut down reading")?
+        }
+        ShutdownWrite {
+            id,
+            direction,
+            discard: 0,
+        } => renderer.message(Some(*id), Some(*direction), "shut down writing")?,
+        ShutdownWrite {
+            id,
+            direction,
+            discard: n,
+        } => renderer.message(
+            Some(*id),
+            Some(*direction),
+            format_args!("Shut down writing, discarding {n} unsent bytes"),
+        )?,
+    }
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::Error;
 
 pub type ConnectionId = usize;
@@ -7,6 +9,17 @@ pub enum Direction {
     Upstream,
     Downstream,
 }
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Direction::Upstream => "UPSTREAM",
+            Direction::Downstream => "DOWNSTREAM",
+        };
+        s.fmt(f)
+    }
+}
+
 
 #[derive(Debug)]
 pub enum MapiEvent {
@@ -47,10 +60,10 @@ pub enum MapiEvent {
     },
 }
 
-pub struct EventSink(Box<dyn FnMut(MapiEvent)>);
+pub struct EventSink(Box<dyn FnMut(MapiEvent) + 'static + Send>);
 
 impl EventSink {
-    pub fn new(f: impl FnMut(MapiEvent) + 'static) -> Self {
+    pub fn new(f: impl FnMut(MapiEvent) + 'static + Send) -> Self {
         EventSink(Box::new(f))
     }
 
