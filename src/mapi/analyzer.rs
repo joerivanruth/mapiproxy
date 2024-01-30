@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Analyzer {
     Head {
@@ -32,8 +34,6 @@ impl Analyzer {
 
             (PartialHead { byte1 }, [byte2, ..]) => (1, Self::parse_header(byte1, byte2)),
 
-            (Head { .. } | PartialHead { .. }, []) => return None,
-
             (
                 Body {
                     still_needed, last, ..
@@ -47,7 +47,7 @@ impl Analyzer {
                     len,
                     last,
                 },
-                _,
+                [_byte1, ..],
             ) => {
                 let n =
                     u16::try_from(data.len()).expect("large data slices handled in previous case");
@@ -59,7 +59,9 @@ impl Analyzer {
                         last: *last,
                     },
                 )
-            } // _ => todo!(),
+            }
+            
+            (_, []) => return None, // _ => todo!(),
         };
         *self = new_state;
         Some(taken as usize)
