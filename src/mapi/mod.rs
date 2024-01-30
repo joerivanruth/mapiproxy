@@ -146,9 +146,10 @@ impl State {
 pub struct Accumulator {
     id: ConnectionId,
     direction: Direction,
-    _level: Level,
+    level: Level,
     _force_binary: bool,
     analyzer: Analyzer,
+    binary: Binary,
     _buf: Vec<u8>,
 }
 
@@ -157,14 +158,35 @@ impl Accumulator {
         Accumulator {
             id,
             direction,
-            _level: level,
+            level,
             _force_binary: force_binary,
             analyzer: Analyzer::new(),
+            binary: Binary::new(),
             _buf: Vec::with_capacity(8192),
         }
     }
 
     fn handle_data(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
+        assert_eq!(self.level, Level::Raw);
+
+        renderer.header(self.id, self.direction, &[&format_args!("{n} bytes", n=data.len())])?;
+        while let Some((head, tail)) = self.analyzer.split_chunk(data) {
+            data = tail;
+            for b in head {
+                if let Some(s) = self.binary.add(*b) {
+                    renderer.line(s)?;
+                }
+            }
+        }
+        if let Some(s) = self.binary.finish() {
+            renderer.line(s)?;
+        }
+        renderer.footer(&[])?;
+
+        Ok(())
+    }
+
+    fn _handle_datax(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
         let mut render = |msg: &dyn fmt::Display| -> io::Result<()> {
             renderer.message(Some(self.id), Some(self.direction), msg)
         };
@@ -189,5 +211,85 @@ impl Accumulator {
 
     fn check_incomplete(&mut self, _renderer: &mut Renderer) -> io::Result<()> {
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct Binary {
+    buf: String,
+    text: String,
+    col: usize,
+}
+
+static HEXDIGITS: [char; 16] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+];
+
+impl Binary {
+    fn new() -> Self {
+        Binary {
+            buf: String::with_capacity(128),
+            text: String::with_capacity(16),
+            col: 0,
+        }
+    }
+
+    fn add(&mut self, byte: u8) -> Option<&str> {
+        if self.col == 0 {
+            self.buf.clear();
+            self.text.clear();
+        }
+        self.buf.push(HEXDIGITS[(byte / 16) as usize]);
+        self.buf.push(HEXDIGITS[(byte & 0xF) as usize]);
+        self.text.push(Self::readable(byte));
+
+        self.col += 1;
+        self.add_sep();
+
+        if self.col == 16 {
+            Some(self.complete())
+        } else {
+            None
+        }
+    }
+
+    fn finish(&mut self) -> Option<&str> {
+        if self.col == 0 {
+            return None;
+        }
+        while self.col < 16 {
+            self.buf.push_str("__");
+            self.col += 1;
+            self.add_sep();
+        }
+        let s = self.complete();
+        Some(s)
+    }
+
+    fn add_sep(&mut self) {
+        self.buf.push(' ');
+        if self.col % 4 == 0 {
+            self.buf.push(' ');
+        }
+        if self.col % 8 == 0 {
+            self.buf.push(' ');
+        }
+    }
+
+    fn complete(&mut self) -> &str {
+        assert_eq!(self.col, 16);
+        self.col = 0;
+        self.buf.push_str("    ");
+        self.buf.push_str(&self.text);
+        &self.buf
+    }
+
+    fn readable(byte: u8) -> char {
+        match byte {
+            b' '..=127 => unsafe { char::from_u32_unchecked(byte as u32) },
+            b'\n' => '↵',
+            b'\t' => '→',
+            _ => '⋄',
+        }
     }
 }

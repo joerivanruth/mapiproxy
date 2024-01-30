@@ -42,7 +42,7 @@ fn main() -> ExitCode {
 fn mymain() -> AResult<()> {
     install_panic_hook();
 
-    let mut level = Level::Blocks;
+    let mut level = Level::Raw;
     let mut force_binary = false;
 
     let mut args = ArgSplitter::from_env();
