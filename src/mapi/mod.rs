@@ -1,16 +1,14 @@
-use std::{
-    collections::HashMap,
-    io::{self, ErrorKind},
-};
+mod analyzer;
 
-use either::Either;
+use std::{collections::HashMap, fmt, io};
 
 use crate::{
     proxy::event::{ConnectionId, Direction, MapiEvent},
     render::Renderer,
     Level,
-    Level::*,
 };
+
+use self::analyzer::Analyzer;
 
 #[derive(Debug)]
 pub struct State {
@@ -148,13 +146,10 @@ impl State {
 pub struct Accumulator {
     id: ConnectionId,
     direction: Direction,
-    level: Level,
-    force_binary: bool,
-    buf: Vec<u8>,
-    header: Vec<u8>,
-    footer: Vec<u8>,
-    must_read: MustRead,
-    last: bool,
+    _level: Level,
+    _force_binary: bool,
+    analyzer: Analyzer,
+    _buf: Vec<u8>,
 }
 
 impl Accumulator {
@@ -162,143 +157,37 @@ impl Accumulator {
         Accumulator {
             id,
             direction,
-            level,
-            force_binary,
-            buf: Vec::with_capacity(8192),
-            header: Vec::with_capacity(80),
-            footer: Vec::with_capacity(80),
-            must_read: MustRead::Head,
-            last: true,
+            _level: level,
+            _force_binary: force_binary,
+            analyzer: Analyzer::new(),
+            _buf: Vec::with_capacity(8192),
         }
     }
 
     fn handle_data(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
-        let _orig = data.len();
-        eprintln!("{dir:?} {data:?}", dir = self.direction);
-        // eprintln!("Handling {orig} bytes ({dir:?})", dir = self.direction);
-        eprint!("");
-        while !data.is_empty() {
-            // eprintln!(
-            //     "At {n}/{orig}: {s:?} last={last}",
-            //     n = orig - data.len(),
-            //     s = self.must_read,
-            //     last = self.last
-            // );
-            let n = self.accept_some_data(data, renderer)?;
-            data = &data[n..];
+        let mut render = |msg: &dyn fmt::Display| -> io::Result<()> {
+            renderer.message(Some(self.id), Some(self.direction), msg)
+        };
+        while let Some((head, tail)) = self.analyzer.split_chunk(data) {
+            data = tail;
+            let kind = if self.analyzer.was_head() {
+                "head"
+            } else {
+                "body"
+            };
+            render(&format_args!("{kind} {head:?}"))?;
+            if self.analyzer.was_block_boundary() {
+                render(&"block boundary")?;
+            }
+            if self.analyzer.was_message_boundary() {
+                render(&"message boundary")?;
+            }
         }
-        // eprintln!(
-        //     "At {orig}/{orig}: {s:?} last={last:?}",
-        //     s = self.must_read,
-        //     last = self.last
-        // );
+
         Ok(())
     }
 
     fn check_incomplete(&mut self, _renderer: &mut Renderer) -> io::Result<()> {
         Ok(())
     }
-
-    fn accept_some_data(&mut self, data: &[u8], renderer: &mut Renderer) -> io::Result<usize> {
-        use MustRead::*;
-
-        if self.level == Raw {
-            self.render_body(Some(data), renderer)?;
-            return Ok(data.len());
-        }
-
-        let len = data.len();
-        let (consumed, new_state) = match (self.must_read, data) {
-            (_, []) => unreachable!("this should only be called when there is some data"),
-
-            (Head, [byte1, byte2, ..]) => (2, self.process_header(*byte1, *byte2)?),
-
-            (Head, [byte1]) => (1, MustRead::PartialHead(*byte1)),
-
-            (PartialHead(byte1), [byte2, ..]) => (1, self.process_header(byte1, *byte2)?),
-
-            (Body(n), _) if self.level == Blocks && self.buf.is_empty() && data.len() >= n => {
-                // no need to append to buffer first, we have it all right here
-                self.render_body(Some(&data[..n]), renderer)?;
-                (n, Head)
-            }
-
-            (Body(n), _) if len >= n => {
-                self.buf.extend_from_slice(&data[..n]);
-                match (self.level, self.last) {
-                    (Blocks, _) | (Messages, true) => {
-                        self.render_body(None, renderer)?;
-                        self.buf.clear();
-                    }
-                    (Messages, false) => {
-                        // not done yet, accumulate more
-                    }
-                    (Raw, _) => unreachable!("Raw has been checked above"),
-                }
-                (n, Head)
-            }
-
-            (Body(n), _) => {
-                assert!(len < n);
-                self.buf.extend_from_slice(data);
-                (len, Body(n - len))
-            }
-        };
-
-        self.must_read = new_state;
-        Ok(consumed)
-    }
-
-    fn process_header(&mut self, byte1: u8, byte2: u8) -> io::Result<MustRead> {
-        // Note: little endian!
-        let n = byte2 as u16 * 256 + byte1 as u16;
-        let max = 2 * 8190 + 1;
-        if n > max {
-            let msg = format!("Maximum header size is {max} ({max:x}), found {n} ({n:x}");
-            let err = io::Error::new(ErrorKind::Other, msg);
-            return Err(err);
-        }
-        let size = n / 2;
-        self.last = n & 1 > 0;
-
-        if size == 0 && !self.last {
-            Ok(MustRead::Head)
-        } else {
-            Ok(MustRead::Body(size as usize))
-        }
-    }
-
-    fn render_body(&mut self, body: Option<&[u8]>, renderer: &mut Renderer) -> io::Result<()> {
-        let body = body.unwrap_or(&self.buf);
-        // eprintln!("  {body:?}");
-        let choice: Either<&str, &[u8]> = if self.force_binary {
-            Either::Right(body)
-        } else if memchr::memchr(0u8, body).is_some() {
-            Either::Right(body)
-        } else {
-            match std::str::from_utf8(body) {
-                Ok(s) => Either::Left(s),
-                Err(_) => Either::Right(body),
-            }
-        };
-
-        let id = Some(self.id);
-        let dir = Some(self.direction);
-
-        self.header.clear();
-        self.footer.clear();
-        match choice {
-            Either::Left(s) => 
-                renderer.message(id, dir, format_args!("text: {s}")),
-            Either::Right(b) => 
-                renderer.message(id, dir, format_args!("bin:  {b:?}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MustRead {
-    Head,
-    PartialHead(u8),
-    Body(usize),
 }

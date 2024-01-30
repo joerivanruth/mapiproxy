@@ -50,7 +50,6 @@ impl From<(ConnectionId, Direction)> for IdStream {
     }
 }
 
-
 impl From<(Option<ConnectionId>, Option<Direction>)> for IdStream {
     fn from(value: (Option<ConnectionId>, Option<Direction>)) -> Self {
         let (id, dir) = value;

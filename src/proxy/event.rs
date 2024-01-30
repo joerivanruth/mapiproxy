@@ -20,7 +20,6 @@ impl fmt::Display for Direction {
     }
 }
 
-
 #[derive(Debug)]
 pub enum MapiEvent {
     BoundPort(String),

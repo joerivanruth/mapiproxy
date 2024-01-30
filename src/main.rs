@@ -14,8 +14,6 @@ use proxy::network::Addr;
 use proxy::Proxy;
 use render::Renderer;
 
-use crate::proxy::event::MapiEvent;
-
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
 Addr:
@@ -89,46 +87,4 @@ fn install_panic_hook() {
         process::exit(1);
     });
     panic::set_hook(my_hook);
-}
-
-#[allow(dead_code)]
-fn print_nondata_event(renderer: &mut Renderer, ev: &MapiEvent) -> AResult<()> {
-    use MapiEvent::*;
-    match ev {
-        BoundPort(port) => 
-            renderer.message(None, None, format_args!("LISTEN on port {port}"))?,
-        Incoming { id, local, peer } => renderer.message(
-            Some(*id),
-            None,
-            format_args!("INCOMING on {local} from {peer}"),
-        )?,
-        Connecting { id, remote } => {
-            renderer.message(Some(*id), None, format_args!("CONNECTING to {remote}"))?
-        }
-        Connected { id, .. } => renderer.message(Some(*id), None, "CONNECTED")?,
-        End { id } => renderer.message(Some(*id), None, "ENDED")?,
-        Aborted { id, error } => {
-            renderer.message(Some(*id), None, format_args!("ABORTED: {error}"))?
-        }
-        Data { .. } => {}
-        ShutdownRead { id, direction } => {
-            renderer.message(Some(*id), Some(*direction), "shut down reading")?
-        }
-        ShutdownWrite {
-            id,
-            direction,
-            discard: 0,
-        } => renderer.message(Some(*id), Some(*direction), "shut down writing")?,
-        ShutdownWrite {
-            id,
-            direction,
-            discard: n,
-        } => renderer.message(
-            Some(*id),
-            Some(*direction),
-            format_args!("Shut down writing, discarding {n} unsent bytes"),
-        )?,
-    }
-
-    Ok(())
 }
