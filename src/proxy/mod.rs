@@ -3,7 +3,7 @@ mod forward;
 pub mod network;
 
 use std::{
-    io,
+    io::{self, ErrorKind},
     net::{self, ToSocketAddrs},
     ops::{ControlFlow, RangeFrom},
 };
@@ -121,7 +121,12 @@ impl Proxy {
         let mut _i = 0u64;
         loop {
             _i += 1;
-            self.poll.poll(&mut events, None).map_err(Error::Poll)?;
+            // self.poll.poll(&mut events, None).map_err(Error::Poll)?;
+            match self.poll.poll(&mut events, None) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(Error::Poll(e)),
+            }
             for ev in events.iter() {
                 let token = ev.token();
                 if token.0 < self.token_base {
