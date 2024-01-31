@@ -1,6 +1,6 @@
 mod analyzer;
 
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io::{self, ErrorKind}};
 
 use crate::{
     proxy::event::{ConnectionId, Direction, MapiEvent},
@@ -51,15 +51,11 @@ impl State {
 
             MapiEvent::End { id } => {
                 renderer.message(Some(*id), None, "ENDED")?;
-                self.check_incomplete(*id, Direction::Upstream, renderer)?;
-                self.check_incomplete(*id, Direction::Downstream, renderer)?;
                 self.remove_connection(id);
             }
 
             MapiEvent::Aborted { id, error } => {
                 renderer.message(Some(*id), None, format_args!("ABORTED: {error}"))?;
-                self.check_incomplete(*id, Direction::Upstream, renderer)?;
-                self.check_incomplete(*id, Direction::Downstream, renderer)?;
                 self.remove_connection(id);
             }
 
@@ -136,7 +132,10 @@ impl State {
             Direction::Upstream => upstream,
             Direction::Downstream => downstream,
         };
-        acc.check_incomplete(renderer)
+        if let Err(e) = acc.check_incomplete() {
+            renderer.message(Some(id), Some(direction), e)?;
+        };
+        Ok(())
     }
 }
 
@@ -242,7 +241,13 @@ impl Accumulator {
         Ok(())
     }
 
-    fn check_incomplete(&mut self, _renderer: &mut Renderer) -> io::Result<()> {
+    fn check_incomplete(&mut self) -> io::Result<()> {
+        if let Err(situation) = self.analyzer.check_incomplete() {
+            let side = self.direction.sender();
+            let message = format!("{side} closed the connection {situation}");
+            let kind = ErrorKind::UnexpectedEof;
+            return Err(io::Error::new(kind, message));
+        }
         Ok(())
     }
 
