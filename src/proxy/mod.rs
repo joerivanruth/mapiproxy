@@ -38,8 +38,12 @@ pub enum Error {
     #[error("connect to {0} failed: {1}")]
     Connect(String, io::Error),
 
-    #[error("forward: {0}")]
-    Forward(io::Error),
+    #[error("forwarding failed when {doing} {side}: {err}")]
+    Forward {
+        doing: &'static str,
+        side: &'static str,
+        err: io::Error,
+    },
 
     #[error("Unix domain sockets are not supported yet")]
     UnixDomain,
@@ -185,11 +189,13 @@ impl Proxy {
 
     fn handle_forward_event(&mut self, ev: &Event, n: usize) {
         let registry = self.poll.registry();
-        let fwd = self.forwarders.get_mut(n).unwrap();
-        let id = fwd.id();
+        let Some(forwarder) = self.forwarders.get_mut(n) else {
+            return;
+        };
+        let id = forwarder.id();
         let mut sink = self.event_sink.sub(id);
 
-        match fwd.handle_event(&mut sink, registry, ev) {
+        match forwarder.handle_event(&mut sink, registry, ev) {
             Ok(ControlFlow::Continue(_)) => {
                 // return instead of removing it
                 return;
@@ -205,7 +211,7 @@ impl Proxy {
         }
 
         // Removal
-        fwd.deregister(registry);
+        forwarder.deregister(registry);
         self.forwarders.remove(n);
     }
 }

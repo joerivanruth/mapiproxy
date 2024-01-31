@@ -66,8 +66,8 @@ impl Forwarder {
         registry: &Registry,
         _ev: &Event,
     ) -> Result<ControlFlow<()>> {
-        let old = self.0.take().unwrap();
-        let handled: ControlFlow<(), Forwarding> = match old {
+        let old_state = self.0.take().unwrap();
+        let handled: ControlFlow<(), Forwarding> = match old_state {
             Forwarding::Connecting(c) => c.process(sink, registry)?,
             Forwarding::Running(r) => r.process(sink, registry)?,
         };
@@ -214,10 +214,14 @@ impl Running {
 
         client
             .update_registration(registry)
-            .map_err(Error::Forward)?;
+            .map_err(|err| {
+                Error::Forward { doing: "registering", side: "client", err }
+            })?;
         server
             .update_registration(registry)
-            .map_err(Error::Forward)?;
+            .map_err(|err| {
+                Error::Forward { doing: "registering", side: "server", err }
+            })?;
 
         if upstream.finished() && downstream.finished() {
             Ok(Break(()))
@@ -282,7 +286,11 @@ impl Copying {
                 Err(e) if would_block(&e) => {
                     // don't touch progress
                 }
-                Err(e) => return Err(Error::Forward(e)),
+                Err(err) => return Err(Error::Forward {
+                    doing: "writing",
+                    side: direction.receiver(),
+                    err
+                }),
             }
         }
 
@@ -324,7 +332,11 @@ impl Copying {
                 Err(e) if would_block(&e) => {
                     // don't touch progress
                 }
-                Err(e) => return Err(Error::Forward(e)),
+                Err(err) => return Err(Error::Forward {
+                    doing: "reading",
+                    side: direction.sender(),
+                    err
+                }),
             }
         }
 
