@@ -11,8 +11,8 @@ use crate::proxy::event::{ConnectionId, Direction};
 pub struct Renderer {
     last_time: Option<Instant>,
     out: BufWriter<Box<dyn io::Write + 'static + Send>>,
-    at_start: bool,
-    style: Style,
+    current_style: Style,
+    at_start: Option<Style>, // if Some(s), we're at line start, style to be reset to s
 }
 
 impl Renderer {
@@ -21,8 +21,8 @@ impl Renderer {
         let buffered = BufWriter::with_capacity(4 * 8192, boxed);
         Renderer {
             out: buffered,
-            at_start: true,
-            style: Style::Normal,
+            current_style: Style::Normal,
+            at_start: Some(Style::Normal),
             last_time: None,
         }
     }
@@ -50,7 +50,9 @@ impl Renderer {
         message: impl Display,
     ) -> io::Result<()> {
         self.before()?;
+        self.style(Style::Frame)?;
         writeln!(self.out, "‣{} {message}", IdStream::from((id, direction)))?;
+        self.style(Style::Normal)?;
         self.out.flush()?;
         self.after();
         Ok(())
@@ -63,20 +65,22 @@ impl Renderer {
         items: &[&dyn fmt::Display],
     ) -> io::Result<()> {
         self.before()?;
-        write!(self.out, "┌ {}", IdStream::from((id, direction)))?;
+        let old_style = self.style(Style::Frame)?;
+        write!(self.out, "┌{}", IdStream::from((id, direction)))?;
         let mut sep = " ";
         for item in items {
             write!(self.out, "{sep}{item}")?;
             sep = ", ";
         }
         writeln!(self.out)?;
-        self.at_start = true;
-        assert_eq!(self.style, Style::Normal);
+        self.at_start = Some(old_style);
+        assert_eq!(self.current_style, Style::Frame);
         Ok(())
     }
 
     pub fn footer(&mut self, items: &[&dyn fmt::Display]) -> io::Result<()> {
         self.clear_line()?;
+        assert_eq!(self.current_style, Style::Frame);
         write!(self.out, "└")?;
         let mut sep = " ";
         for item in items {
@@ -84,62 +88,54 @@ impl Renderer {
             sep = ", ";
         }
         writeln!(self.out)?;
+        self.style(Style::Normal)?;
         self.out.flush()?;
         self.after();
         Ok(())
     }
 
     pub fn put(&mut self, data: impl AsRef<[u8]>) -> io::Result<()> {
-        if self.at_start {
+        if let Some(style) = self.at_start {
+            assert_eq!(self.current_style, Style::Frame);
             self.out.write_all("│".as_bytes())?;
-            if self.style != Style::Normal {
-                self.write_style(self.style)?;
-            }
-            self.at_start = false;
+            self.style(style)?;
+            self.at_start = None;
         }
         self.out.write_all(data.as_ref())?;
         Ok(())
     }
 
     pub fn clear_line(&mut self) -> io::Result<()> {
-        if !self.at_start {
+        if self.at_start.is_none() {
             self.nl()?;
         }
         Ok(())
     }
 
     pub fn nl(&mut self) -> io::Result<()> {
-        if self.style != Style::Normal {
-            self.write_style(Style::Normal)?;
-        }
+        let old_style = self.style(Style::Frame)?;
         writeln!(self.out)?;
-        self.at_start = true;
+        self.at_start = Some(old_style);
         Ok(())
     }
 
     pub fn style(&mut self, mut style: Style) -> io::Result<Style> {
-        if style == self.style {
+        if style == self.current_style {
             return Ok(style);
         }
-        if !self.at_start {
-            self.write_style(style)?;
-        }
-        mem::swap(&mut self.style, &mut style);
+        self.write_style(style)?;
+
+        mem::swap(&mut self.current_style, &mut style);
         Ok(style)
     }
 
     fn write_style(&mut self, style: Style) -> io::Result<()> {
-        let escapes = match style {
+        let escape_sequence = match style {
             Style::Normal => "\u{1b}[m",
-            // Style::Header => "\u{1b}[42m",
-            // Style::Header => "\u{1b}[1m",
-            // Style::Header => "\u{1b}[2m",
-            // Style::Header => "\u{1b}[4m",
-            // Style::Header => "\u{1b}[32m\u{1b}[4m",
-            // Style::Header => "\u{1b}[36m\u{1b}[2m",
-            Style::Header => "\u{1b}[32m\u{1b}[1m",
+            Style::Header => "\u{1b}[1m",
+            Style::Frame => "\u{1b}[36m",
         };
-        self.out.write_all(escapes.as_bytes())?;
+        self.out.write_all(escape_sequence.as_bytes())?;
         Ok(())
     }
 }
@@ -149,7 +145,7 @@ pub struct IdStream(Option<ConnectionId>, Option<Direction>);
 impl fmt::Display for IdStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(id) = self.0 {
-            write!(f, " [{id}]")?;
+            write!(f, " {id}")?;
         }
         if let Some(dir) = self.1 {
             write!(f, " {dir}")?;
@@ -175,5 +171,6 @@ impl From<(Option<ConnectionId>, Option<Direction>)> for IdStream {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Style {
     Normal,
+    Frame,
     Header,
 }

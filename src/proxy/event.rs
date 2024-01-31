@@ -2,7 +2,20 @@ use std::fmt;
 
 use super::Error;
 
-pub type ConnectionId = usize;
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub struct ConnectionId(usize);
+
+impl fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{n}", n = self.0)
+    }
+}
+
+impl ConnectionId {
+    pub fn new(n: usize) -> Self {
+        ConnectionId(n)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Direction {
@@ -17,6 +30,27 @@ impl fmt::Display for Direction {
             Direction::Downstream => "DOWNSTREAM",
         };
         s.fmt(f)
+    }
+}
+
+impl Direction {
+    pub const CLIENT: &'static str = "client";
+
+    pub const SERVER: &'static str = "server";
+
+    pub fn sender(&self) -> &'static str {
+        match self {
+            Direction::Upstream => Self::CLIENT,
+            Direction::Downstream => Self::SERVER,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn receiver(&self) -> &'static str {
+        match self {
+            Direction::Upstream => Self::SERVER,
+            Direction::Downstream => Self::CLIENT,
+        }
     }
 }
 

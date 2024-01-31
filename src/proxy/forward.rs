@@ -290,8 +290,10 @@ impl Copying {
             self.unsent_data = 0;
             self.free_space = 0;
             if self.can_write && !self.can_read {
-                // no data in the buffer and no option to get more
-                sink.emit_shutdown_write(direction, 0);
+                // No data in the buffer and no option to get more
+                // Do not emit ShutdownWrite because the user has already seen
+                // the ShutdownRead
+                // sink.emit_shutdown_write(direction, 0);
                 self.can_write = false;
                 let _ = wr.source.shutdown(std::net::Shutdown::Write);
             }
