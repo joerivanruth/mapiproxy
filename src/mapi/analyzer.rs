@@ -60,7 +60,7 @@ impl Analyzer {
                     },
                 )
             }
-            
+
             (_, []) => return None, // _ => todo!(),
         };
         *self = new_state;
