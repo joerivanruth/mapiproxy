@@ -20,8 +20,16 @@ impl Analyzer {
         Analyzer::Head { boundary: true }
     }
 
-    pub fn split_chunk<'a>(&mut self, data: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
-        self.analyze(data).map(|n| data.split_at(n))
+    pub fn split_chunk<'a>(&mut self, data: &mut &'a [u8]) -> Option<&'a [u8]> {
+        // self.analyze(data).map(|n| data.split_at(n))
+        match self.analyze(data) {
+            Some(n) => {
+                let (head, tail) = data.split_at(n);
+                *data = tail;
+                Some(head)
+            }
+            None => None,
+        }
     }
 
     fn analyze(&mut self, data: &[u8]) -> Option<usize> {

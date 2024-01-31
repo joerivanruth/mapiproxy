@@ -147,10 +147,10 @@ pub struct Accumulator {
     id: ConnectionId,
     direction: Direction,
     level: Level,
-    _force_binary: bool,
+    force_binary: bool,
     analyzer: Analyzer,
     binary: Binary,
-    _buf: Vec<u8>,
+    buf: Vec<u8>,
 }
 
 impl Accumulator {
@@ -159,35 +159,118 @@ impl Accumulator {
             id,
             direction,
             level,
-            _force_binary: force_binary,
+            force_binary,
             analyzer: Analyzer::new(),
             binary: Binary::new(),
-            _buf: Vec::with_capacity(8192),
+            buf: Vec::with_capacity(8192),
         }
     }
 
-    fn handle_data(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
-        assert_eq!(self.level, Level::Raw);
+    fn handle_data(&mut self, data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
+        match self.level {
+            Level::Raw => self.handle_raw(renderer, data),
+            Level::Blocks | Level::Messages => self.handle_frame(renderer, data),
+        }
+    }
 
+    fn handle_raw(&mut self, renderer: &mut Renderer, mut data: &[u8]) -> Result<(), io::Error> {
         renderer.header(
             self.id,
             self.direction,
             &[&format_args!("{n} bytes", n = data.len())],
         )?;
-        while let Some((head, tail)) = self.analyzer.split_chunk(data) {
+        while let Some(head) = self.analyzer.split_chunk(&mut data) {
             let is_head = self.analyzer.was_head();
-            data = tail;
             for b in head {
                 self.binary.add(*b, is_head, renderer)?;
             }
         }
         self.binary.finish(renderer)?;
         renderer.footer(&[])?;
+        Ok(())
+    }
 
+    fn handle_frame(&mut self, renderer: &mut Renderer, mut data: &[u8]) -> Result<(), io::Error> {
+        while let Some(chunk) = self.analyzer.split_chunk(&mut data) {
+            if self.analyzer.was_head() {
+                continue;
+            }
+
+            let at_end = match self.level {
+                Level::Blocks => self.analyzer.was_block_boundary(),
+                Level::Messages => self.analyzer.was_message_boundary(),
+                Level::Raw => unreachable!(),
+            };
+
+            if !at_end {
+                self.buf.extend_from_slice(chunk);
+                continue;
+            }
+
+            // we have a complete frame, dump it
+            let frame = if self.buf.is_empty() {
+                Some(chunk)
+            } else {
+                self.buf.extend_from_slice(chunk);
+                None
+            };
+            self.dump_frame(frame, renderer)?;
+            self.buf.clear();
+        }
+        Ok(())
+    }
+
+    fn dump_frame(&mut self, data: Option<&[u8]>, renderer: &mut Renderer) -> io::Result<()> {
+        let data = data.unwrap_or(&self.buf);
+        let len = data.len();
+        let kind = match self.level {
+            Level::Blocks => "block",
+            Level::Messages => "message",
+            Level::Raw => unreachable!(),
+        };
+        renderer.header(
+            self.id,
+            self.direction,
+            &[&kind, &format_args!("{len} bytes")],
+        )?;
+        if self.force_binary || memchr::memchr(0u8, data).is_some() {
+            self.dump_frame_as_binary(data, renderer)?;
+        } else if let Ok(s) = std::str::from_utf8(data) {
+            self.dump_frame_as_text(s, renderer)?;
+        } else {
+            self.dump_frame_as_binary(data, renderer)?;
+        }
+        renderer.footer(&[])?;
         Ok(())
     }
 
     fn check_incomplete(&mut self, _renderer: &mut Renderer) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn dump_frame_as_binary(&self, data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
+        let mut bin = Binary::new();
+        for b in data {
+            bin.add(*b, false, renderer)?;
+        }
+        bin.finish(renderer)
+    }
+
+    fn dump_frame_as_text(&self, text: &str, renderer: &mut Renderer) -> io::Result<()> {
+        let data = text.as_bytes();
+        for byte in data {
+            match *byte {
+                b'\n' => {
+                    renderer.put("↵")?;
+                    renderer.nl()?;
+                }
+                b'\t' => {
+                    renderer.put("→")?;
+                }
+                b => renderer.put([b])?,
+            }
+        }
+        renderer.clear_line()?;
         Ok(())
     }
 }
