@@ -1,10 +1,10 @@
 mod analyzer;
 
-use std::{collections::HashMap, fmt, io};
+use std::{collections::HashMap, io};
 
 use crate::{
     proxy::event::{ConnectionId, Direction, MapiEvent},
-    render::Renderer,
+    render::{Renderer, Style},
     Level,
 };
 
@@ -169,42 +169,20 @@ impl Accumulator {
     fn handle_data(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
         assert_eq!(self.level, Level::Raw);
 
-        renderer.header(self.id, self.direction, &[&format_args!("{n} bytes", n=data.len())])?;
+        renderer.header(
+            self.id,
+            self.direction,
+            &[&format_args!("{n} bytes", n = data.len())],
+        )?;
         while let Some((head, tail)) = self.analyzer.split_chunk(data) {
+            let is_head = self.analyzer.was_head();
             data = tail;
             for b in head {
-                if let Some(s) = self.binary.add(*b) {
-                    renderer.line(s)?;
-                }
+                self.binary.add(*b, is_head, renderer)?;
             }
         }
-        if let Some(s) = self.binary.finish() {
-            renderer.line(s)?;
-        }
+        self.binary.finish(renderer)?;
         renderer.footer(&[])?;
-
-        Ok(())
-    }
-
-    fn _handle_datax(&mut self, mut data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
-        let mut render = |msg: &dyn fmt::Display| -> io::Result<()> {
-            renderer.message(Some(self.id), Some(self.direction), msg)
-        };
-        while let Some((head, tail)) = self.analyzer.split_chunk(data) {
-            data = tail;
-            let kind = if self.analyzer.was_head() {
-                "head"
-            } else {
-                "body"
-            };
-            render(&format_args!("{kind} {head:?}"))?;
-            if self.analyzer.was_block_boundary() {
-                render(&"block boundary")?;
-            }
-            if self.analyzer.was_message_boundary() {
-                render(&"message boundary")?;
-            }
-        }
 
         Ok(())
     }
@@ -216,80 +194,115 @@ impl Accumulator {
 
 #[derive(Debug)]
 struct Binary {
-    buf: String,
-    text: String,
+    row: [(u8, bool); 16],
     col: usize,
 }
-
-static HEXDIGITS: [char; 16] = [
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
-];
 
 impl Binary {
     fn new() -> Self {
         Binary {
-            buf: String::with_capacity(128),
-            text: String::with_capacity(16),
+            row: [(0, false); 16],
             col: 0,
         }
     }
 
-    fn add(&mut self, byte: u8) -> Option<&str> {
-        if self.col == 0 {
-            self.buf.clear();
-            self.text.clear();
-        }
-        self.buf.push(HEXDIGITS[(byte / 16) as usize]);
-        self.buf.push(HEXDIGITS[(byte & 0xF) as usize]);
-        self.text.push(Self::readable(byte));
-
+    fn add(&mut self, byte: u8, is_head: bool, renderer: &mut Renderer) -> io::Result<()> {
+        self.row[self.col] = (byte, is_head);
         self.col += 1;
-        self.add_sep();
 
         if self.col == 16 {
-            Some(self.complete())
+            self.write_out(renderer, false)
         } else {
-            None
+            Ok(())
         }
     }
 
-    fn finish(&mut self) -> Option<&str> {
+    fn finish(&mut self, renderer: &mut Renderer) -> io::Result<()> {
         if self.col == 0 {
-            return None;
+            return Ok(());
         }
-        while self.col < 16 {
-            self.buf.push_str("__");
-            self.col += 1;
-            self.add_sep();
-        }
-        let s = self.complete();
-        Some(s)
+        self.write_out(renderer, true)
     }
 
-    fn add_sep(&mut self) {
-        self.buf.push(' ');
-        if self.col % 4 == 0 {
-            self.buf.push(' ');
-        }
-        if self.col % 8 == 0 {
-            self.buf.push(' ');
-        }
-    }
+    fn write_out(&mut self, renderer: &mut Renderer, _keep_head_state: bool) -> io::Result<()> {
+        const HEX_DIGITS: [u8; 16] = *b"0123456789abcdef";
+        let mut cur_head = false;
+        for (i, (byte, is_head)) in self.row[..self.col].iter().cloned().enumerate() {
+            self.put_sep(i, &mut cur_head, is_head, renderer)?;
 
-    fn complete(&mut self) -> &str {
-        assert_eq!(self.col, 16);
+            let hi = HEX_DIGITS[byte as usize / 16];
+            let lo = HEX_DIGITS[byte as usize & 0xF];
+
+            let style = if is_head {
+                Style::Header
+            } else {
+                Style::Normal
+            };
+            renderer.style(style)?;
+            renderer.put([hi, lo])?;
+            renderer.style(Style::Normal)?;
+        }
+
+        for i in self.col..16 {
+            self.put_sep(i, &mut cur_head, false, renderer)?;
+            renderer.put(b"__")?;
+        }
+
+        // if the sep includes a style change, this is its
+        // chance to wrap it up
+        self.put_sep(16, &mut cur_head, false, renderer)?;
+
+        for (byte, _) in &self.row[..self.col] {
+            renderer.put(Self::readable(&[*byte]))?;
+        }
+
+        renderer.nl()?;
+
         self.col = 0;
-        self.buf.push_str("    ");
-        self.buf.push_str(&self.text);
-        &self.buf
+        Ok(())
     }
 
-    fn readable(byte: u8) -> char {
-        match byte {
-            b' '..=127 => unsafe { char::from_u32_unchecked(byte as u32) },
-            b'\n' => '↵',
-            b'\t' => '→',
-            _ => '⋄',
+    fn put_sep(
+        &self,
+        i: usize,
+        in_head: &mut bool,
+        is_head: bool,
+        renderer: &mut Renderer,
+    ) -> Result<(), io::Error> {
+        let extra_space: [u8; 17] = [
+            0, 0, 0, 0, //
+            1, 0, 0, 0, //
+            2, 0, 0, 0, //
+            1, 0, 0, 0, //
+            4,
+        ];
+        let spaces = "          ";
+        let extra = extra_space[i] as usize;
+        // let (open, close) = ("⟨", "⟩");
+        let (open, close) = ("«", "»");
+        match (*in_head, is_head) {
+            (false, true) => {
+                renderer.put(&spaces[..extra])?;
+                renderer.put(open)?;
+            }
+            (true, false) => {
+                renderer.put(close)?;
+                renderer.put(&spaces[..extra])?;
+            }
+            _ => renderer.put(&spaces[..extra + 1])?,
         }
+        *in_head = is_head;
+        Ok(())
+    }
+
+    fn readable(byte: &[u8; 1]) -> &[u8] {
+        let s = match byte[0] {
+            b' '..=127 => return byte.as_ref(),
+            b'\n' => "↵",
+            b'\t' => "→",
+            0 => "░",
+            _ => "▒",
+        };
+        s.as_bytes()
     }
 }
