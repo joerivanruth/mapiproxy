@@ -14,7 +14,7 @@ use self::analyzer::Analyzer;
 pub struct State {
     level: Level,
     force_binary: bool,
-    accs: HashMap<usize, (Accumulator, Accumulator)>,
+    accs: HashMap<ConnectionId, (Accumulator, Accumulator)>,
 }
 
 impl State {
@@ -80,15 +80,12 @@ impl State {
 
             MapiEvent::ShutdownRead { id, direction } => {
                 self.check_incomplete(*id, *direction, renderer)?;
-                renderer.message(Some(*id), Some(*direction), "shut down reading")?;
-            }
-
-            MapiEvent::ShutdownWrite {
-                id,
-                direction,
-                discard: 0,
-            } => {
-                renderer.message(Some(*id), Some(*direction), "shut down writing")?;
+                let sender = direction.sender();
+                renderer.message(
+                    Some(*id),
+                    Some(*direction),
+                    format_args!("{sender} stopped sending"),
+                )?;
             }
 
             MapiEvent::ShutdownWrite {
@@ -96,10 +93,11 @@ impl State {
                 direction,
                 discard: n,
             } => {
+                let receiver = direction.receiver();
                 renderer.message(
                     Some(*id),
                     Some(*direction),
-                    format_args!("shut down writing, discarded {n} bytes"),
+                    format_args!("{receiver} stopped reading, discarding {n} bytes"),
                 )?;
             }
         }
@@ -107,7 +105,7 @@ impl State {
         Ok(())
     }
 
-    fn add_connection(&mut self, id: &usize) {
+    fn add_connection(&mut self, id: &ConnectionId) {
         let level = self.level;
         let upstream = Accumulator::new(*id, Direction::Upstream, level, self.force_binary);
         let downstream = Accumulator::new(*id, Direction::Downstream, level, self.force_binary);
@@ -118,7 +116,7 @@ impl State {
         }
     }
 
-    fn remove_connection(&mut self, id: &usize) {
+    fn remove_connection(&mut self, id: &ConnectionId) {
         let ended = self.accs.remove(id);
         if ended.is_none() {
             panic!("Found no state to remove for end event on connection {id}");
@@ -127,7 +125,7 @@ impl State {
 
     fn check_incomplete(
         &mut self,
-        id: usize,
+        id: ConnectionId,
         direction: Direction,
         renderer: &mut Renderer,
     ) -> io::Result<()> {
@@ -253,7 +251,8 @@ impl Accumulator {
         for b in data {
             bin.add(*b, false, renderer)?;
         }
-        bin.finish(renderer)
+        bin.finish(renderer)?;
+        Ok(())
     }
 
     fn dump_frame_as_text(&self, text: &str, renderer: &mut Renderer) -> io::Result<()> {
@@ -361,15 +360,19 @@ impl Binary {
         ];
         let spaces = "          ";
         let extra = extra_space[i] as usize;
-        // let (open, close) = ("⟨", "⟩");
-        let (open, close) = ("«", "»");
+        let (open, close) = ("⟨", "⟩");
+        // let (open, close) = ("«", "»");
         match (*in_head, is_head) {
             (false, true) => {
                 renderer.put(&spaces[..extra])?;
+                let old_style = renderer.style(Style::Header)?;
                 renderer.put(open)?;
+                renderer.style(old_style)?;
             }
             (true, false) => {
+                let old_style = renderer.style(Style::Header)?;
                 renderer.put(close)?;
+                renderer.style(old_style)?;
                 renderer.put(&spaces[..extra])?;
             }
             _ => renderer.put(&spaces[..extra + 1])?,

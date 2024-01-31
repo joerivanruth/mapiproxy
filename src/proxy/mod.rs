@@ -150,7 +150,7 @@ impl Proxy {
             };
             let peer = peer.to_string();
 
-            let id = self.ids.next().unwrap();
+            let id = ConnectionId::new(self.ids.next().unwrap());
             self.event_sink
                 .sub(id)
                 .emit_incoming(local.clone(), peer.clone());
