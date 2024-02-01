@@ -65,7 +65,7 @@ fn mymain() -> AResult<()> {
 
     let mut renderer = Renderer::new(io::stdout());
 
-    let (send_events, receive_events) = std::sync::mpsc::sync_channel(20);
+    let (send_events, receive_events) = std::sync::mpsc::sync_channel(500);
     let sink = EventSink::new(move |event| {
         let _ = send_events.send(event);
     });
