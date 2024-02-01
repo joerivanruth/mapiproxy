@@ -12,4 +12,5 @@ either = "1.9.0"
 memchr = "2.7.1"
 mio = { version = "0.8.10", features = [ "net", "os-ext", "os-poll" ] }
 slab = "0.4.9"
+smallvec = { version = "1.13.1", features = [ "union" ] }
 thiserror = "1.0.56"

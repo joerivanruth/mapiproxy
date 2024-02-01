@@ -317,13 +317,13 @@ impl Copying {
             match rd.attempt(Interest::READABLE, |r| r.read(dest)) {
                 Ok(n @ 1..) => {
                     let data = &dest[..n];
-                    sink.emit_data(direction, data.to_vec());
+                    sink.emit_data(direction, data);
                     progress = true;
                     self.free_space += n;
                 }
                 Ok(0) => {
                     // eof
-                    sink.emit_data(direction, vec![]);
+                    sink.emit_data(direction, &[]);
                     progress = true;
                     sink.emit_shutdown_read(direction);
                     self.can_read = false;

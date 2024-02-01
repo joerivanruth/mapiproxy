@@ -1,5 +1,7 @@
 use std::fmt;
 
+use smallvec::SmallVec;
+
 use super::Error;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
@@ -80,7 +82,7 @@ pub enum MapiEvent {
     Data {
         id: ConnectionId,
         direction: Direction,
-        data: Vec<u8>,
+        data: SmallVec<[u8;8]>,
     },
     ShutdownRead {
         id: ConnectionId,
@@ -157,11 +159,11 @@ impl<'a> ConnectionSink<'a> {
         });
     }
 
-    pub fn emit_data(&mut self, direction: Direction, data: Vec<u8>) {
+    pub fn emit_data(&mut self, direction: Direction, data: &[u8]) {
         self.0.emit_event(MapiEvent::Data {
             id: self.id(),
             direction,
-            data,
+            data: SmallVec::from_slice(data),
         })
     }
 
