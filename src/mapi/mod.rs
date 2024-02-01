@@ -220,23 +220,27 @@ impl Accumulator {
     fn dump_frame(&mut self, data: Option<&[u8]>, renderer: &mut Renderer) -> io::Result<()> {
         let data = data.unwrap_or(&self.buf);
         let len = data.len();
-        let kind = match self.level {
-            Level::Blocks => "block",
-            Level::Messages => "message",
-            Level::Raw => unreachable!(),
+        let is_binary =
+            self.force_binary || self.is_scary(data) || std::str::from_utf8(data).is_err();
+
+        let format = if is_binary { "binary" } else { "text" };
+        let kind = if self.level == Level::Messages {
+            "message"
+        } else {
+            "block"
         };
         renderer.header(
             self.id,
             self.direction,
-            &[&kind, &format_args!("{len} bytes")],
+            &[&format, &kind, &format_args!("{len} bytes")],
         )?;
-        if self.force_binary || memchr::memchr(0u8, data).is_some() {
+
+        if is_binary {
             self.dump_frame_as_binary(data, renderer)?;
-        } else if let Ok(s) = std::str::from_utf8(data) {
-            self.dump_frame_as_text(s, renderer)?;
         } else {
-            self.dump_frame_as_binary(data, renderer)?;
+            self.dump_frame_as_text(data, renderer)?;
         }
+
         renderer.footer(&[])?;
         Ok(())
     }
@@ -260,8 +264,7 @@ impl Accumulator {
         Ok(())
     }
 
-    fn dump_frame_as_text(&self, text: &str, renderer: &mut Renderer) -> io::Result<()> {
-        let data = text.as_bytes();
+    fn dump_frame_as_text(&self, data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
         for byte in data {
             match *byte {
                 b'\n' => {
@@ -276,6 +279,15 @@ impl Accumulator {
         }
         renderer.clear_line()?;
         Ok(())
+    }
+
+    fn is_scary(&self, data: &[u8]) -> bool {
+        for &b in data {
+            if b < b' ' && b != b'\n' && b != b'\t' {
+                return true;
+            }
+        }
+        false
     }
 }
 
