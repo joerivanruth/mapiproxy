@@ -1,0 +1,42 @@
+
+
+name: Build and test mapiproxy
+on:
+  push:
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+
+  buildntest:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Show toolchain versions
+        run: |
+          cargo --version
+          rustc --version
+          rustup --version 2>/dev/null
+
+      - name: cargo test
+        run: cargo test
+
+      - name: build
+        run: cargo build --release
+
+      - name: strip debug symbols
+        run: |
+          cp target/release/mapiproxy target/release/mapiproxy.dbg
+          strip target/release/mapiproxy
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapiproxy
+          path: |
+            target/release/mapiproxy
+            target/release/mapiproxy.dbg
+          if-no-files-found: error
