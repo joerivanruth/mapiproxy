@@ -119,7 +119,7 @@ impl MonetAddr {
         let path = match self {
             MonetAddr::Tcp { .. } => return Ok(vec![]),
             MonetAddr::Unix(p) => p.clone(),
-            MonetAddr::PortOnly(port) => PathBuf::from(format!("/tmp/.s.monetdb.BAD{port}")),
+            MonetAddr::PortOnly(port) => PathBuf::from(format!("/tmp/.s.monetdb.{port}")),
         };
         Ok(vec![Addr::Unix(path)])
     }
@@ -135,6 +135,14 @@ impl Display for Addr {
 }
 
 impl Addr {
+    pub fn is_tcp(&self) -> bool {
+        matches!(self, Self::Tcp(_))
+    }
+
+    pub fn is_unix(&self) -> bool {
+        matches!(self, Self::Unix(_))
+    }
+
     pub fn listen(&self) -> io::Result<MioListener> {
         let listener = match self {
             Addr::Tcp(a) => MioListener::Tcp(TcpListener::bind(*a)?),
@@ -218,6 +226,14 @@ impl mio::event::Source for MioListener {
 }
 
 impl MioListener {
+    pub fn is_tcp(&self) -> bool {
+        matches!(self, Self::Tcp(_))
+    }
+
+    pub fn is_unix(&self) -> bool {
+        matches!(self, Self::Unix(_))
+    }
+
     pub fn accept(&self) -> io::Result<(MioStream, Addr)> {
         match self {
             MioListener::Tcp(lis) => {
@@ -269,6 +285,14 @@ impl mio::event::Source for MioStream {
 }
 
 impl MioStream {
+    pub fn is_tcp(&self) -> bool {
+        matches!(self, Self::Tcp(_))
+    }
+
+    pub fn is_unix(&self) -> bool {
+        matches!(self, Self::Unix(_))
+    }
+
     pub fn established(&self) -> io::Result<Option<Addr>> {
         if let Err(e) | Ok(Some(e)) = self.take_error() {
             return Err(e);
