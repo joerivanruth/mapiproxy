@@ -107,8 +107,10 @@ impl Analyzer {
 
     pub fn check_incomplete(&self) -> Result<(), &'static str> {
         let msg = match self {
-            Analyzer::Head { boundary: true  } => return Ok(()),
-            Analyzer::Head { boundary: false  } => "on a block boundary but not on a message boundary",
+            Analyzer::Head { boundary: true } => return Ok(()),
+            Analyzer::Head { boundary: false } => {
+                "on a block boundary but not on a message boundary"
+            }
             Analyzer::PartialHead { .. } => "in the middle of the header block",
             Analyzer::Body { last: false, .. } => "in the middle of a block",
             Analyzer::Body { last: true, .. } => "in the middle of the last block of the message",

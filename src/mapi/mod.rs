@@ -1,6 +1,9 @@
 mod analyzer;
 
-use std::{collections::HashMap, io::{self, ErrorKind}};
+use std::{
+    collections::HashMap,
+    io::{self, ErrorKind},
+};
 
 use crate::{
     proxy::event::{ConnectionId, Direction, MapiEvent},
@@ -47,6 +50,20 @@ impl State {
 
             MapiEvent::Connected { id, .. } => {
                 renderer.message(Some(*id), None, "CONNECTED")?;
+            }
+
+            MapiEvent::ConnectFailed {
+                id,
+                remote,
+                immediately,
+                error,
+            } => {
+                let immediately = if *immediately { " immediately" } else { "" };
+                renderer.message(
+                    Some(*id),
+                    None,
+                    format_args!("CONNECT FAILED{immediately}: {remote}: {error}"),
+                )?;
             }
 
             MapiEvent::End { id } => {

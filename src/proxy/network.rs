@@ -4,6 +4,7 @@ use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
     fmt::Display,
+    fs,
     io::{self, ErrorKind},
     net::{self, ToSocketAddrs},
     path::{Path, PathBuf},
@@ -115,8 +116,12 @@ impl MonetAddr {
     }
 
     pub fn resolve_unix(&self) -> io::Result<Vec<Addr>> {
-        // todo!
-        Ok(vec![])
+        let path = match self {
+            MonetAddr::Tcp { .. } => return Ok(vec![]),
+            MonetAddr::Unix(p) => p.clone(),
+            MonetAddr::PortOnly(port) => PathBuf::from(format!("/tmp/.s.monetdb.BAD{port}")),
+        };
+        Ok(vec![Addr::Unix(path)])
     }
 }
 
@@ -132,15 +137,25 @@ impl Display for Addr {
 impl Addr {
     pub fn listen(&self) -> io::Result<MioListener> {
         let listener = match self {
-            Addr::Tcp(a) => MioListener::Tcp(TcpListener::bind(a.clone())?),
-            Addr::Unix(a) => MioListener::Unix(UnixListener::bind(a.clone())?),
+            Addr::Tcp(a) => MioListener::Tcp(TcpListener::bind(*a)?),
+            Addr::Unix(a) => {
+                let listener = match UnixListener::bind(a) {
+                    Ok(lis) => lis,
+                    Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+                        fs::remove_file(a)?;
+                        UnixListener::bind(a)?
+                    }
+                    Err(other) => return Err(other),
+                };
+                MioListener::Unix(listener)
+            }
         };
         Ok(listener)
     }
 
     pub fn connect(&self) -> io::Result<MioStream> {
         let conn = match self {
-            Addr::Tcp(a) => MioStream::Tcp(TcpStream::connect(a.clone())?),
+            Addr::Tcp(a) => MioStream::Tcp(TcpStream::connect(*a)?),
             Addr::Unix(a) => MioStream::Unix(UnixStream::connect(a)?),
         };
         Ok(conn)
@@ -161,7 +176,11 @@ impl From<PathBuf> for Addr {
 
 impl From<mio::net::SocketAddr> for Addr {
     fn from(value: mio::net::SocketAddr) -> Self {
-        value.as_pathname().unwrap_or(Path::new("<UNNAMED>")).to_path_buf().into()
+        value
+            .as_pathname()
+            .unwrap_or(Path::new("<UNNAMED>"))
+            .to_path_buf()
+            .into()
     }
 }
 
@@ -250,7 +269,33 @@ impl mio::event::Source for MioStream {
 }
 
 impl MioStream {
-    pub fn take_error(&self) -> Result<Option<io::Error>, io::Error> {
+    pub fn established(&self) -> io::Result<Option<Addr>> {
+        if let Err(e) | Ok(Some(e)) = self.take_error() {
+            return Err(e);
+        }
+
+        let peer_result = match self {
+            MioStream::Tcp(s) => s.peer_addr().map(Addr::from),
+            MioStream::Unix(s) => s.peer_addr().map(Addr::from),
+        };
+
+        match peer_result {
+            Ok(addr) => Ok(Some(addr)),
+            Err(e) => match e.kind() {
+                ErrorKind::WouldBlock | ErrorKind::NotConnected => Ok(None),
+                _ => Err(e),
+            },
+        }
+    }
+
+    pub fn shutdown(&self, shutdown: net::Shutdown) -> io::Result<()> {
+        match self {
+            MioStream::Tcp(s) => s.shutdown(shutdown),
+            MioStream::Unix(s) => s.shutdown(shutdown),
+        }
+    }
+
+    pub fn take_error(&self) -> io::Result<Option<io::Error>> {
         match self {
             MioStream::Tcp(s) => s.take_error(),
             MioStream::Unix(s) => s.take_error(),
@@ -263,13 +308,6 @@ impl MioStream {
             MioStream::Unix(s) => s.peer_addr()?.into(),
         };
         Ok(addr)
-    }
-
-    pub fn shutdown(&self, shutdown: net::Shutdown) -> io::Result<()> {
-        match self {
-            MioStream::Tcp(s) => s.shutdown(shutdown),
-            MioStream::Unix(s) => s.shutdown(shutdown),
-        }
     }
 }
 
@@ -285,7 +323,8 @@ impl io::Write for MioStream {
         match self {
             MioStream::Tcp(s) => s.flush(),
             MioStream::Unix(s) => s.flush(),
-        }    }
+        }
+    }
 
     fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         match self {

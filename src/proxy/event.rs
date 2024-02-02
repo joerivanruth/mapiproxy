@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, io};
 
 use smallvec::SmallVec;
 
@@ -58,10 +58,10 @@ impl Direction {
 
 #[derive(Debug)]
 pub enum MapiEvent {
-    BoundPort(String),
+    BoundPort(Addr),
     Incoming {
         id: ConnectionId,
-        local: String,
+        local: Addr,
         peer: Addr,
     },
     Connecting {
@@ -82,7 +82,7 @@ pub enum MapiEvent {
     Data {
         id: ConnectionId,
         direction: Direction,
-        data: SmallVec<[u8;8]>,
+        data: SmallVec<[u8; 8]>,
     },
     ShutdownRead {
         id: ConnectionId,
@@ -92,6 +92,12 @@ pub enum MapiEvent {
         id: ConnectionId,
         direction: Direction,
         discard: usize,
+    },
+    ConnectFailed {
+        id: ConnectionId,
+        remote: String,
+        error: io::Error,
+        immediately: bool,
     },
 }
 
@@ -110,7 +116,7 @@ impl EventSink {
         (self.0)(event)
     }
 
-    pub fn emit_bound(&mut self, port: String) {
+    pub fn emit_bound(&mut self, port: Addr) {
         self.emit_event(MapiEvent::BoundPort(port))
     }
 }
@@ -126,7 +132,7 @@ impl<'a> ConnectionSink<'a> {
         self.1
     }
 
-    pub fn emit_incoming(&mut self, local: String, peer: Addr) {
+    pub fn emit_incoming(&mut self, local: Addr, peer: Addr) {
         self.0.emit_event(MapiEvent::Incoming {
             id: self.id(),
             local,
@@ -138,6 +144,15 @@ impl<'a> ConnectionSink<'a> {
         self.0.emit_event(MapiEvent::Connecting {
             id: self.id(),
             remote,
+        });
+    }
+
+    pub fn emit_connect_failed(&mut self, remote: String, immediately: bool, error: io::Error) {
+        self.0.emit_event(MapiEvent::ConnectFailed {
+            id: self.id(),
+            remote,
+            error,
+            immediately,
         });
     }
 

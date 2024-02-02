@@ -1,6 +1,7 @@
 use std::{
     io::{self, ErrorKind, Read, Write},
     ops::ControlFlow::{self, Break, Continue},
+    vec,
 };
 
 use mio::{
@@ -83,6 +84,7 @@ impl Forwarder {
 struct Connecting {
     client: Registered<MioStream>,
     server: Registered<MioStream>,
+    addrs: vec::IntoIter<Addr>,
 }
 
 impl Connecting {
@@ -95,28 +97,63 @@ impl Connecting {
         server_token: Token,
         registry: &Registry,
     ) -> Result<Connecting> {
-        let addrs = server_addr.resolve()
-            .map_err(|e| Error::Connect(server_addr.to_string(), e))?;
+        let addrs = match server_addr.resolve() {
+            Ok(addrs) => addrs,
+            Err(e) => {
+                event_sink.emit_connect_failed(server_addr.to_string(), true, e);
+                return Err(Error::Connect);
+            }
+        };
+
         if addrs.is_empty() {
             let msg = "name does not resolve to any addresses";
             let e = io::Error::new(ErrorKind::NotFound, msg);
-            return Err(Error::Connect(server_addr.to_string(), e));
+            event_sink.emit_connect_failed(server_addr.to_string(), true, e);
+            return Err(Error::Connect);
         }
 
-        // TODO: Should really connect to all of them
-        let addr = addrs[0].clone();
-        event_sink.emit_connecting(addr.clone());
-        let conn = addr.connect()
-            .map_err(|e| Error::Connect(server_addr.to_string(), e))?;
-
         let client = Registered::new(client_addr.to_string(), client_token, client);
-        let mut server = Registered::new(server_addr.to_string(), server_token, conn);
-        server.need(Some(Interest::WRITABLE));
-        server
-            .update_registration(registry)
-            .map_err(|e| Error::Connect(server.name.clone(), e))?;
-        let connecting = Connecting { client, server };
+
+        let mut addrs = addrs.into_iter();
+        let Some(server) = Self::connect_addrs(event_sink, server_token, registry, &mut addrs)
+        else {
+            return Err(Error::Connect);
+        };
+
+        let connecting = Connecting {
+            client,
+            server,
+            addrs,
+        };
         Ok(connecting)
+    }
+
+    /// Try to connect to each of the addrs in turn, returning when one succeeds.
+    ///
+    /// If all fail, return the last error.
+    /// If there were no addrs left, return Ok(Some).
+    fn connect_addrs(
+        event_sink: &mut ConnectionSink,
+        token: Token,
+        registry: &Registry,
+        addrs: impl Iterator<Item = Addr>,
+    ) -> Option<Registered<MioStream>> {
+        for addr in addrs {
+            event_sink.emit_connecting(addr.clone());
+            let err = match addr.connect() {
+                Ok(stream) => {
+                    let mut server = Registered::new(addr.to_string(), token, stream);
+                    server.need(Some(Interest::WRITABLE));
+                    match server.update_registration(registry) {
+                        Ok(()) => return Some(server),
+                        Err(e) => e,
+                    }
+                }
+                Err(e) => e,
+            };
+            event_sink.emit_connect_failed(addr.to_string(), true, err);
+        }
+        None
     }
 
     fn deregister(&mut self, registry: &Registry) {
@@ -125,34 +162,54 @@ impl Connecting {
     }
 
     fn process(
-        mut self,
+        self,
         sink: &mut ConnectionSink,
         registry: &Registry,
     ) -> Result<ControlFlow<(), Forwarding>> {
-        let Connecting { server, .. } = &mut self;
+        let Connecting {
+            client,
+            mut server,
+            mut addrs,
+        } = self;
 
-        // If there's a true error, return it
-        let server_status = server.attempt(Interest::WRITABLE, |conn| conn.take_error());
-        if let Err(e) | Ok(Some(e)) = server_status {
-            return Err(Error::Connect(server.name.clone(), e));
-        }
+        let established = server.attempt(Interest::WRITABLE, |conn| conn.established());
 
-        // Check peer_name to see if we're really connected.
-        let err = match server.attempt(Interest::WRITABLE, |conn| conn.peer_addr()) {
-            Ok(peer) => {
+        // If it succeeded or if we're still waiting, handle that here.
+        // Otherwise, we'll have to report the error and try another address
+        let error = match established {
+            Ok(Some(peer)) => {
                 sink.emit_connected(peer);
-                let running = Running::from(self);
+                let running = Running::from(client, server);
+                // kickstart it by running its process method too
                 return running.process(sink, registry);
+            }
+            Ok(None) => {
+                let connecting = Connecting {
+                    client,
+                    server,
+                    addrs,
+                };
+                let forwarding = Forwarding::Connecting(connecting);
+                return Ok(Continue(forwarding));
             }
             Err(e) => e,
         };
 
-        // Some error kinds mean 'continue trying', others mean 'abort'.
-        if let ErrorKind::WouldBlock | ErrorKind::NotConnected = err.kind() {
-            let forwarding = Forwarding::Connecting(self);
+        sink.emit_connect_failed(server.name.clone(), false, error);
+
+        let token = server.token;
+        drop(server);
+
+        if let Some(server) = Self::connect_addrs(sink, token, registry, &mut addrs) {
+            let connecting = Connecting {
+                client,
+                server,
+                addrs,
+            };
+            let forwarding = Forwarding::Connecting(connecting);
             Ok(Continue(forwarding))
         } else {
-            Err(Error::Connect(server.name.clone(), err))
+            Err(Error::Connect)
         }
     }
 }
@@ -166,8 +223,7 @@ struct Running {
 }
 
 impl Running {
-    fn from(connecting: Connecting) -> Running {
-        let Connecting { client, server } = connecting;
+    fn from(client: Registered<MioStream>, server: Registered<MioStream>) -> Running {
         let upstream = Copying::new();
         let downstream = Copying::new();
         Running {

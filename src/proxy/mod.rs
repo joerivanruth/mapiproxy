@@ -10,14 +10,14 @@ use std::{
 use forward::Forwarder;
 use network::Addr;
 
-use mio::{
-    event::Event,
-    Events, Interest, Poll, Token,
-};
+use mio::{event::Event, Events, Interest, Poll, Token};
 use slab::Slab;
 use thiserror::Error as ThisError;
 
-use self::{event::{ConnectionId, EventSink}, network::{MioListener, MioStream, MonetAddr}};
+use self::{
+    event::{ConnectionId, EventSink},
+    network::{MioListener, MioStream, MonetAddr},
+};
 
 #[derive(Debug, ThisError)]
 pub enum Error {
@@ -31,10 +31,10 @@ pub enum Error {
     Poll(io::Error),
 
     #[error("accept() failed on {0}: {1}")]
-    Accept(String, io::Error),
+    Accept(Addr, io::Error),
 
-    #[error("connect to {0} failed: {1}")]
-    Connect(String, io::Error),
+    #[error("None of the servers responded")]
+    Connect,
 
     #[error("forwarding failed when {doing} {side}: {err}")]
     Forward {
@@ -55,14 +55,18 @@ pub struct Proxy {
     forward_addr: MonetAddr,
     poll: Poll,
     token_base: usize,
-    listeners: Vec<(String, MioListener)>,
+    listeners: Vec<(Addr, MioListener)>,
     forwarders: Slab<Forwarder>,
     ids: RangeFrom<usize>,
     event_sink: EventSink,
 }
 
 impl Proxy {
-    pub fn new(listen_addr: MonetAddr, forward_addr: MonetAddr, event_sink: EventSink) -> Result<Proxy> {
+    pub fn new(
+        listen_addr: MonetAddr,
+        forward_addr: MonetAddr,
+        event_sink: EventSink,
+    ) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
         let mut proxy = Proxy {
             listen_addr,
@@ -80,7 +84,9 @@ impl Proxy {
     }
 
     fn add_listeners(&mut self) -> Result<()> {
-        let addrs = self.listen_addr.resolve()
+        let addrs = self
+            .listen_addr
+            .resolve()
             .map_err(|e| Error::StartListening(self.listen_addr.to_string(), e))?;
 
         for addr in addrs {
@@ -96,7 +102,8 @@ impl Proxy {
         let n = self.listeners.len();
         let token = Token(n);
 
-        let mut listener = addr.listen()
+        let mut listener = addr
+            .listen()
             .map_err(|e| Error::StartListening(addr.to_string(), e))?;
 
         self.poll
@@ -104,7 +111,6 @@ impl Proxy {
             .register(&mut listener, token, Interest::READABLE)
             .map_err(|e| Error::StartListening(addr.to_string(), e))?;
 
-        let addr = addr.to_string();
         self.event_sink.emit_bound(addr.clone());
         self.listeners.push((addr, listener));
 
