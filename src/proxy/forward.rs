@@ -224,8 +224,10 @@ struct Running {
 
 impl Running {
     fn from(client: Registered<MioStream>, server: Registered<MioStream>) -> Result<Running> {
-        let upstream = Copying::new();
-        let downstream = Copying::new();
+        let client_is_unix = client.source.is_unix();
+        let server_is_unix = server.source.is_unix();
+        let upstream = Copying::new(client_is_unix, server_is_unix);
+        let downstream = Copying::new(false, false);
 
         for (side, sock) in [("client", &client), ("server", &server)] {
             sock.source.set_nodelay(true).map_err(|e| Error::Forward {
@@ -301,18 +303,28 @@ pub struct Copying {
     buffer: Box<[u8; Self::BUFSIZE]>,
     unsent_data: usize,
     free_space: usize,
+    fix_unix_read: bool,
 }
 
 impl Copying {
     const BUFSIZE: usize = 8192;
 
-    fn new() -> Self {
+    fn new(fix_unix_read: bool, fix_unix_write: bool) -> Self {
+        let mut free_space = 0;
+        let mut buffer = Box::new([0; Self::BUFSIZE]);
+
+        if fix_unix_write {
+            buffer[0] = b'0';
+            free_space = 1;
+        }
+
         Copying {
             can_read: true,
             can_write: true,
-            buffer: Box::new([0; Self::BUFSIZE]),
+            buffer,
             unsent_data: 0,
-            free_space: 0,
+            free_space,
+            fix_unix_read,
         }
     }
 
@@ -328,6 +340,19 @@ impl Copying {
         assert!(self.unsent_data == self.free_space || self.can_write);
 
         let mut progress = false;
+
+        if self.fix_unix_read && self.free_space > 0 {
+            assert_eq!(self.unsent_data, 0);
+            if self.buffer[0] == b'0' {
+                // skip it
+                self.unsent_data = 1;
+                self.fix_unix_read = false;
+            } else {
+                return Err(Error::Other(
+                    "client did not start with a '0' (0x30) byte".to_string(),
+                ));
+            }
+        }
 
         let to_write = &self.buffer[self.unsent_data..self.free_space];
         if !to_write.is_empty() {
