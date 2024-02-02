@@ -69,7 +69,7 @@ impl Analyzer {
                 )
             }
 
-            (_, []) => return None, // _ => todo!(),
+            (_, []) => return None,
         };
         *self = new_state;
         Some(taken as usize)

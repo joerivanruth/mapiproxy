@@ -10,7 +10,7 @@ use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
 
 use proxy::event::EventSink;
-use proxy::network::Addr;
+use proxy::network::MonetAddr;
 use proxy::Proxy;
 use render::Renderer;
 
@@ -59,8 +59,8 @@ fn mymain() -> AResult<()> {
             _ => return Err(ArgError::unknown_flag(flag).into()),
         }
     }
-    let listen_addr: Addr = args.stashed_os("LISTEN ADDR")?.try_into()?;
-    let forward_addr: Addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
+    let listen_addr: MonetAddr = args.stashed_os("LISTEN ADDR")?.try_into()?;
+    let forward_addr: MonetAddr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
 
     let mut renderer = Renderer::new(io::stdout());

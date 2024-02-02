@@ -2,7 +2,7 @@ use std::fmt;
 
 use smallvec::SmallVec;
 
-use super::Error;
+use super::{network::Addr, Error};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub struct ConnectionId(usize);
@@ -62,15 +62,15 @@ pub enum MapiEvent {
     Incoming {
         id: ConnectionId,
         local: String,
-        peer: String,
+        peer: Addr,
     },
     Connecting {
         id: ConnectionId,
-        remote: String,
+        remote: Addr,
     },
     Connected {
         id: ConnectionId,
-        peer: String,
+        peer: Addr,
     },
     End {
         id: ConnectionId,
@@ -126,7 +126,7 @@ impl<'a> ConnectionSink<'a> {
         self.1
     }
 
-    pub fn emit_incoming(&mut self, local: String, peer: String) {
+    pub fn emit_incoming(&mut self, local: String, peer: Addr) {
         self.0.emit_event(MapiEvent::Incoming {
             id: self.id(),
             local,
@@ -134,14 +134,14 @@ impl<'a> ConnectionSink<'a> {
         });
     }
 
-    pub fn emit_connecting(&mut self, remote: String) {
+    pub fn emit_connecting(&mut self, remote: Addr) {
         self.0.emit_event(MapiEvent::Connecting {
             id: self.id(),
             remote,
         });
     }
 
-    pub fn emit_connected(&mut self, remote: String) {
+    pub fn emit_connected(&mut self, remote: Addr) {
         self.0.emit_event(MapiEvent::Connected {
             id: self.id(),
             peer: remote,

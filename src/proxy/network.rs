@@ -1,76 +1,93 @@
 #![allow(dead_code)]
 
-use io::Error as IOError;
-use io::ErrorKind as Kind;
-use std::borrow::Cow;
-use std::ffi::OsString;
-use std::fmt;
+use std::{
+    borrow::Cow,
+    ffi::{OsStr, OsString},
+    fmt::Display,
+    io::{self, ErrorKind},
+    net::{self, ToSocketAddrs},
+    path::{Path, PathBuf},
+};
 
-use std::net::Shutdown;
-use std::net::TcpListener;
-use std::net::TcpStream;
-use std::os::unix::net::UnixListener;
-use std::os::unix::net::UnixStream;
-use std::{ffi::OsStr, io, path::PathBuf};
+use mio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 
-fn explain_io<T>(descr: &dyn fmt::Display, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    match f() {
-        Ok(c) => Ok(c),
-        Err(e) => {
-            let kind = e.kind();
-            let message = format!("{descr}: {e}");
-            Err(io::Error::new(kind, message))
-        }
-    }
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum MonetAddr {
+    Tcp { host: String, port: u16 },
+    Unix(PathBuf),
+    PortOnly(u16),
 }
 
+#[derive(Debug, Clone)]
 pub enum Addr {
-    Tcp(String),
-    #[cfg(unix)]
+    Tcp(net::SocketAddr),
     Unix(PathBuf),
 }
 
-impl TryFrom<&OsStr> for Addr {
-    type Error = io::Error;
+#[derive(Debug)]
+pub enum MioListener {
+    Tcp(TcpListener),
+    Unix(UnixListener),
+}
 
-    fn try_from(value: &OsStr) -> Result<Self, Self::Error> {
-        let bytes = value.as_encoded_bytes();
-        if bytes.contains(&b'/') || bytes.contains(&b'\\') {
-            // Must be Unix
-            #[cfg(unix)]
-            {
-                let path = PathBuf::from(value);
-                return Ok(Addr::Unix(path));
-            }
-            #[cfg(not(unix))]
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "Unix domain sockets not supported",
-                ));
-            }
+#[derive(Debug)]
+pub enum MioStream {
+    Tcp(TcpStream),
+    Unix(UnixStream),
+}
+
+impl Display for MonetAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MonetAddr::Tcp { host, port } => write!(f, "{host}:{port}"),
+            MonetAddr::Unix(path) => path.display().fmt(f),
+            MonetAddr::PortOnly(n) => n.fmt(f),
         }
-
-        let text = match value.to_string_lossy() {
-            Cow::Owned(lossy) => {
-                return Err(IOError::new(
-                    Kind::InvalidInput,
-                    format!("Invalid unicode in addr '{lossy}'"),
-                ))
-            }
-            Cow::Borrowed(s) => s,
-        };
-
-        let full = match text.parse::<u16>() {
-            Ok(n) => format!("localhost:{n}"),
-            Err(_) => text.to_owned(),
-        };
-
-        Ok(Addr::Tcp(full))
     }
 }
 
-impl TryFrom<OsString> for Addr {
+impl TryFrom<&OsStr> for MonetAddr {
+    type Error = io::Error;
+
+    fn try_from(os_value: &OsStr) -> Result<Self, Self::Error> {
+        let str_value = os_value.to_string_lossy();
+
+        let make_error = || {
+            io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("invalid address: {}", str_value),
+            )
+        };
+
+        // If it contains slashes or backslashes, it must be a path
+        let bytes = os_value.as_encoded_bytes();
+        if bytes.contains(&b'/') || bytes.contains(&b'\\') {
+            return Ok(MonetAddr::Unix(os_value.into()));
+        }
+
+        // The other possibilities are all proper str's
+        let Cow::Borrowed(str_value) = str_value else {
+            return Err(make_error());
+        };
+
+        // If it's a number, it must be the port number.
+        if let Ok(port) = str_value.parse() {
+            return Ok(MonetAddr::PortOnly(port));
+        }
+
+        // If it ends in :DIGITS, it must be a host:port pair
+        if let Some(colon) = str_value.rfind(':') {
+            if let Ok(port) = str_value[colon + 1..].parse() {
+                let host = str_value[..colon].to_string();
+                return Ok(MonetAddr::Tcp { host, port });
+            }
+        }
+
+        Err(make_error())
+    }
+}
+
+impl TryFrom<OsString> for MonetAddr {
     type Error = io::Error;
 
     fn try_from(value: OsString) -> Result<Self, Self::Error> {
@@ -78,166 +95,218 @@ impl TryFrom<OsString> for Addr {
     }
 }
 
-impl fmt::Display for Addr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl MonetAddr {
+    pub fn resolve(&self) -> io::Result<Vec<Addr>> {
+        let mut addrs = self.resolve_unix()?;
+        let tcp_addrs = self.resolve_tcp()?;
+        addrs.extend(tcp_addrs);
+        Ok(addrs)
+    }
+
+    pub fn resolve_tcp(&self) -> io::Result<Vec<Addr>> {
+        let (host, port) = match self {
+            MonetAddr::Unix(_) => return Ok(vec![]),
+            MonetAddr::Tcp { host, port } => (host.as_str(), *port),
+            MonetAddr::PortOnly(port) => ("localhost", *port),
+        };
+        let resolved = (host, port).to_socket_addrs()?;
+        let addrs = resolved.into_iter().map(Addr::Tcp).collect();
+        Ok(addrs)
+    }
+
+    pub fn resolve_unix(&self) -> io::Result<Vec<Addr>> {
+        // todo!
+        Ok(vec![])
+    }
+}
+
+impl Display for Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Addr::Tcp(addr) => addr.fmt(f),
-            #[cfg(unix)]
+            Addr::Tcp(a) => a.fmt(f),
             Addr::Unix(path) => path.display().fmt(f),
         }
     }
 }
 
 impl Addr {
-    pub fn is_tcp(&self) -> bool {
-        matches!(self, Self::Tcp(_))
-    }
-
-    pub fn is_unix(&self) -> bool {
-        !self.is_tcp()
-    }
-
-    pub fn connect(&self) -> io::Result<(ReadHalf, WriteHalf)> {
-        explain_io(self, || match self {
-            Addr::Tcp(addr) => {
-                let conn1 = TcpStream::connect(addr)?;
-                let conn2 = conn1.try_clone()?;
-                Ok((ReadHalf::Tcp(conn1), WriteHalf::Tcp(conn2)))
-            }
-            #[cfg(unix)]
-            Addr::Unix(path) => {
-                let conn1 = UnixStream::connect(path)?;
-                let conn2 = conn1.try_clone()?;
-                Ok((ReadHalf::Unix(conn1), WriteHalf::Unix(conn2)))
-            }
-        })
-    }
-
-    pub fn listen(&self) -> io::Result<Listener> {
-        explain_io(self, || match self {
-            Addr::Tcp(addr) => {
-                let listener = TcpListener::bind(addr)?;
-                let addr = listener.local_addr()?.to_string();
-                Ok(Listener::Tcp(Addr::Tcp(addr), listener))
-            }
-            #[cfg(unix)]
-            Addr::Unix(path) => {
-                let listener = UnixListener::bind(path)?;
-                let addr = path.clone();
-                Ok(Listener::Unix(Addr::Unix(addr), listener))
-            }
-        })
-    }
-}
-
-pub enum Listener {
-    Tcp(Addr, TcpListener),
-    Unix(Addr, UnixListener),
-}
-
-impl Listener {
-    pub fn is_tcp(&self) -> bool {
-        matches!(self, Self::Tcp(_, _))
-    }
-
-    pub fn is_unix(&self) -> bool {
-        !self.is_tcp()
-    }
-
-    pub fn local_addr(&self) -> &Addr {
-        match self {
-            Listener::Tcp(a, _) => a,
-            Listener::Unix(a, _) => a,
-        }
-    }
-
-    pub fn accept(&self) -> io::Result<(ReadHalf, WriteHalf)> {
-        explain_io(self.local_addr(), || match self {
-            Listener::Tcp(_, lis) => {
-                let (stream1, _) = lis.accept()?;
-                let stream2 = stream1.try_clone()?;
-                Ok((ReadHalf::Tcp(stream1), WriteHalf::Tcp(stream2)))
-            }
-            Listener::Unix(_, lis) => {
-                let (stream1, _) = lis.accept()?;
-                let stream2 = stream1.try_clone()?;
-                Ok((ReadHalf::Unix(stream1), WriteHalf::Unix(stream2)))
-            }
-        })
-    }
-}
-
-#[derive(Debug)]
-pub enum ReadHalf {
-    Tcp(TcpStream),
-    Unix(UnixStream),
-}
-
-impl io::Read for ReadHalf {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            ReadHalf::Tcp(conn) => conn.read(buf),
-            ReadHalf::Unix(conn) => conn.read(buf),
-        }
-    }
-}
-
-impl Drop for ReadHalf {
-    fn drop(&mut self) {
-        let _ = match self {
-            ReadHalf::Tcp(conn) => conn.shutdown(Shutdown::Read),
-            ReadHalf::Unix(conn) => conn.shutdown(Shutdown::Read),
+    pub fn listen(&self) -> io::Result<MioListener> {
+        let listener = match self {
+            Addr::Tcp(a) => MioListener::Tcp(TcpListener::bind(a.clone())?),
+            Addr::Unix(a) => MioListener::Unix(UnixListener::bind(a.clone())?),
         };
+        Ok(listener)
+    }
+
+    pub fn connect(&self) -> io::Result<MioStream> {
+        let conn = match self {
+            Addr::Tcp(a) => MioStream::Tcp(TcpStream::connect(a.clone())?),
+            Addr::Unix(a) => MioStream::Unix(UnixStream::connect(a)?),
+        };
+        Ok(conn)
     }
 }
 
-impl ReadHalf {
-    pub fn is_tcp(&self) -> bool {
-        matches!(self, Self::Tcp(_))
-    }
-
-    pub fn is_unix(&self) -> bool {
-        !self.is_tcp()
+impl From<net::SocketAddr> for Addr {
+    fn from(value: net::SocketAddr) -> Self {
+        Addr::Tcp(value)
     }
 }
 
-#[derive(Debug)]
-pub enum WriteHalf {
-    Tcp(TcpStream),
-    Unix(UnixStream),
+impl From<PathBuf> for Addr {
+    fn from(value: PathBuf) -> Self {
+        Addr::Unix(value)
+    }
 }
 
-impl io::Write for WriteHalf {
+impl From<mio::net::SocketAddr> for Addr {
+    fn from(value: mio::net::SocketAddr) -> Self {
+        value.as_pathname().unwrap_or(Path::new("<UNNAMED>")).to_path_buf().into()
+    }
+}
+
+impl mio::event::Source for MioListener {
+    fn register(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.register(registry, token, interests),
+            Self::Unix(lis) => lis.register(registry, token, interests),
+        }
+    }
+
+    fn reregister(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.reregister(registry, token, interests),
+            Self::Unix(lis) => lis.reregister(registry, token, interests),
+        }
+    }
+
+    fn deregister(&mut self, registry: &mio::Registry) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.deregister(registry),
+            Self::Unix(lis) => lis.deregister(registry),
+        }
+    }
+}
+
+impl MioListener {
+    pub fn accept(&self) -> io::Result<(MioStream, Addr)> {
+        match self {
+            MioListener::Tcp(lis) => {
+                let (conn, peer) = lis.accept()?;
+                let stream = MioStream::Tcp(conn);
+                let peer = Addr::Tcp(peer);
+                Ok((stream, peer))
+            }
+            MioListener::Unix(lis) => {
+                let (conn, peer) = lis.accept()?;
+                let stream = MioStream::Unix(conn);
+                Ok((stream, peer.into()))
+            }
+        }
+    }
+}
+
+impl mio::event::Source for MioStream {
+    fn register(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.register(registry, token, interests),
+            Self::Unix(lis) => lis.register(registry, token, interests),
+        }
+    }
+
+    fn reregister(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.reregister(registry, token, interests),
+            Self::Unix(lis) => lis.reregister(registry, token, interests),
+        }
+    }
+
+    fn deregister(&mut self, registry: &mio::Registry) -> io::Result<()> {
+        match self {
+            Self::Tcp(lis) => lis.deregister(registry),
+            Self::Unix(lis) => lis.deregister(registry),
+        }
+    }
+}
+
+impl MioStream {
+    pub fn take_error(&self) -> Result<Option<io::Error>, io::Error> {
+        match self {
+            MioStream::Tcp(s) => s.take_error(),
+            MioStream::Unix(s) => s.take_error(),
+        }
+    }
+
+    pub fn peer_addr(&self) -> Result<Addr, io::Error> {
+        let addr = match self {
+            MioStream::Tcp(s) => s.peer_addr()?.into(),
+            MioStream::Unix(s) => s.peer_addr()?.into(),
+        };
+        Ok(addr)
+    }
+
+    pub fn shutdown(&self, shutdown: net::Shutdown) -> io::Result<()> {
+        match self {
+            MioStream::Tcp(s) => s.shutdown(shutdown),
+            MioStream::Unix(s) => s.shutdown(shutdown),
+        }
+    }
+}
+
+impl io::Write for MioStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            WriteHalf::Tcp(conn) => conn.write(buf),
-            WriteHalf::Unix(conn) => conn.write(buf),
+            MioStream::Tcp(s) => s.write(buf),
+            MioStream::Unix(s) => s.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            WriteHalf::Tcp(conn) => conn.flush(),
-            WriteHalf::Unix(conn) => conn.flush(),
+            MioStream::Tcp(s) => s.flush(),
+            MioStream::Unix(s) => s.flush(),
+        }    }
+
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        match self {
+            MioStream::Tcp(s) => s.write_vectored(bufs),
+            MioStream::Unix(s) => s.write_vectored(bufs),
         }
     }
 }
 
-impl Drop for WriteHalf {
-    fn drop(&mut self) {
-        let _ = match self {
-            WriteHalf::Tcp(conn) => conn.shutdown(Shutdown::Write),
-            WriteHalf::Unix(conn) => conn.shutdown(Shutdown::Write),
-        };
-    }
-}
-
-impl WriteHalf {
-    pub fn is_tcp(&self) -> bool {
-        matches!(self, Self::Tcp(_))
+impl io::Read for MioStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            MioStream::Tcp(s) => s.read(buf),
+            MioStream::Unix(s) => s.read(buf),
+        }
     }
 
-    pub fn is_unix(&self) -> bool {
-        !self.is_tcp()
+    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
+        match self {
+            MioStream::Tcp(s) => s.read_vectored(bufs),
+            MioStream::Unix(s) => s.read_vectored(bufs),
+        }
     }
 }

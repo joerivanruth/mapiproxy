@@ -4,7 +4,6 @@ pub mod network;
 
 use std::{
     io::{self, ErrorKind},
-    net::{self, ToSocketAddrs},
     ops::{ControlFlow, RangeFrom},
 };
 
@@ -13,13 +12,12 @@ use network::Addr;
 
 use mio::{
     event::Event,
-    net::{TcpListener, TcpStream},
     Events, Interest, Poll, Token,
 };
 use slab::Slab;
 use thiserror::Error as ThisError;
 
-use self::event::{ConnectionId, EventSink};
+use self::{event::{ConnectionId, EventSink}, network::{MioListener, MioStream, MonetAddr}};
 
 #[derive(Debug, ThisError)]
 pub enum Error {
@@ -45,9 +43,6 @@ pub enum Error {
         err: io::Error,
     },
 
-    #[error("Unix domain sockets are not supported yet")]
-    UnixDomain,
-
     #[allow(dead_code)]
     #[error("{0}")]
     Other(String),
@@ -56,18 +51,18 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub struct Proxy {
-    listen_addr: Addr,
-    forward_addr: Addr,
+    listen_addr: MonetAddr,
+    forward_addr: MonetAddr,
     poll: Poll,
     token_base: usize,
-    listeners: Vec<(String, TcpListener)>,
+    listeners: Vec<(String, MioListener)>,
     forwarders: Slab<Forwarder>,
     ids: RangeFrom<usize>,
     event_sink: EventSink,
 }
 
 impl Proxy {
-    pub fn new(listen_addr: Addr, forward_addr: Addr, event_sink: EventSink) -> Result<Proxy> {
+    pub fn new(listen_addr: MonetAddr, forward_addr: MonetAddr, event_sink: EventSink) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
         let mut proxy = Proxy {
             listen_addr,
@@ -85,12 +80,8 @@ impl Proxy {
     }
 
     fn add_listeners(&mut self) -> Result<()> {
-        let Addr::Tcp(target) = &self.listen_addr else {
-            return Err(Error::UnixDomain);
-        };
-        let addrs = target
-            .to_socket_addrs()
-            .map_err(|e| Error::StartListening(target.clone(), e))?;
+        let addrs = self.listen_addr.resolve()
+            .map_err(|e| Error::StartListening(self.listen_addr.to_string(), e))?;
 
         for addr in addrs {
             self.add_tcp_listener(addr)?;
@@ -101,21 +92,21 @@ impl Proxy {
         Ok(())
     }
 
-    fn add_tcp_listener(&mut self, addr: net::SocketAddr) -> Result<()> {
+    fn add_tcp_listener(&mut self, addr: Addr) -> Result<()> {
         let n = self.listeners.len();
         let token = Token(n);
 
-        let mut tcp_listener =
-            TcpListener::bind(addr).map_err(|e| Error::StartListening(addr.to_string(), e))?;
+        let mut listener = addr.listen()
+            .map_err(|e| Error::StartListening(addr.to_string(), e))?;
 
         self.poll
             .registry()
-            .register(&mut tcp_listener, token, Interest::READABLE)
+            .register(&mut listener, token, Interest::READABLE)
             .map_err(|e| Error::StartListening(addr.to_string(), e))?;
 
         let addr = addr.to_string();
         self.event_sink.emit_bound(addr.clone());
-        self.listeners.push((addr, tcp_listener));
+        self.listeners.push((addr, listener));
 
         Ok(())
     }
@@ -152,17 +143,16 @@ impl Proxy {
                     return Err(Error::Accept(local.clone(), e));
                 }
             };
-            let peer = peer.to_string();
 
             let id = ConnectionId::new(self.ids.next().unwrap());
             self.event_sink
                 .sub(id)
                 .emit_incoming(local.clone(), peer.clone());
-            self.start_forwarder(id, peer.to_string(), conn);
+            self.start_forwarder(id, peer, conn);
         }
     }
 
-    fn start_forwarder(&mut self, id: ConnectionId, peer: String, conn: TcpStream) {
+    fn start_forwarder(&mut self, id: ConnectionId, peer: Addr, conn: MioStream) {
         let mut sink = self.event_sink.sub(id);
         let entry = self.forwarders.vacant_entry();
         let n = entry.key();
