@@ -302,12 +302,19 @@ impl MioStream {
         }
     }
 
-    pub fn peer_addr(&self) -> Result<Addr, io::Error> {
+    pub fn peer_addr(&self) -> io::Result<Addr> {
         let addr = match self {
             MioStream::Tcp(s) => s.peer_addr()?.into(),
             MioStream::Unix(s) => s.peer_addr()?.into(),
         };
         Ok(addr)
+    }
+
+    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
+        match self {
+            MioStream::Tcp(s) => s.set_nodelay(nodelay),
+            MioStream::Unix(_) => Ok(()),
+        }
     }
 }
 

@@ -179,7 +179,7 @@ impl Connecting {
         let error = match established {
             Ok(Some(peer)) => {
                 sink.emit_connected(peer);
-                let running = Running::from(client, server);
+                let running = Running::from(client, server)?;
                 // kickstart it by running its process method too
                 return running.process(sink, registry);
             }
@@ -223,15 +223,25 @@ struct Running {
 }
 
 impl Running {
-    fn from(client: Registered<MioStream>, server: Registered<MioStream>) -> Running {
+    fn from(client: Registered<MioStream>, server: Registered<MioStream>) -> Result<Running> {
         let upstream = Copying::new();
         let downstream = Copying::new();
-        Running {
+
+        for (side, sock) in [("client", &client), ("server", &server)] {
+            sock.source.set_nodelay(true).map_err(|e| Error::Forward {
+                doing: "setting nodelay",
+                side,
+                err: e,
+            })?;
+        }
+
+        let running = Running {
             client,
             server,
             upstream,
             downstream,
-        }
+        };
+        Ok(running)
     }
 
     fn deregister(&mut self, registry: &Registry) {
