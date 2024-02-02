@@ -93,7 +93,7 @@ impl State {
                 renderer.message(
                     Some(*id),
                     Some(*direction),
-                    format_args!("{receiver} stopped reading, discarding {n} bytes"),
+                    format_args!("{receiver} has stopped receiving data, discarding {n} bytes"),
                 )?;
             }
         }

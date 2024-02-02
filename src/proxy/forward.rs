@@ -1,18 +1,16 @@
 use std::{
     io::{self, ErrorKind, Read, Write},
-    net::{SocketAddr, ToSocketAddrs},
     ops::ControlFlow::{self, Break, Continue},
 };
 
 use mio::{
     event::{Event, Source},
-    net::TcpStream,
     Interest, Registry, Token,
 };
 
 use super::{
     event::{ConnectionId, ConnectionSink, Direction},
-    network::Addr,
+    network::{Addr, MioStream, MonetAddr},
     would_block, Error, Result,
 };
 
@@ -28,10 +26,10 @@ impl Forwarder {
     pub fn new(
         registry: &Registry,
         event_sink: &mut ConnectionSink,
-        conn: TcpStream,
-        peer: String,
+        conn: MioStream,
+        peer: Addr,
         client_token: Token,
-        forward_addr: &Addr,
+        forward_addr: &MonetAddr,
         server_token: Token,
     ) -> Result<Self> {
         let connecting = Connecting::new(
@@ -83,27 +81,22 @@ impl Forwarder {
 
 #[derive(Debug)]
 struct Connecting {
-    client: Registered<TcpStream>,
-    server: Registered<TcpStream>,
+    client: Registered<MioStream>,
+    server: Registered<MioStream>,
 }
 
 impl Connecting {
     fn new(
         event_sink: &mut ConnectionSink,
-        server_addr: &Addr,
-        client_addr: String,
+        server_addr: &MonetAddr,
+        client_addr: Addr,
         client_token: Token,
-        client: TcpStream,
+        client: MioStream,
         server_token: Token,
         registry: &Registry,
     ) -> Result<Connecting> {
-        let Addr::Tcp(server_addr) = server_addr else {
-            return Err(Error::UnixDomain);
-        };
-        let addrs: Vec<SocketAddr> = server_addr
-            .to_socket_addrs()
-            .map_err(|e| Error::Connect(server_addr.to_string(), e))?
-            .collect();
+        let addrs = server_addr.resolve()
+            .map_err(|e| Error::Connect(server_addr.to_string(), e))?;
         if addrs.is_empty() {
             let msg = "name does not resolve to any addresses";
             let e = io::Error::new(ErrorKind::NotFound, msg);
@@ -111,12 +104,12 @@ impl Connecting {
         }
 
         // TODO: Should really connect to all of them
-        let addr = addrs[0];
-        event_sink.emit_connecting(addr.to_string());
-        let conn =
-            TcpStream::connect(addr).map_err(|e| Error::Connect(server_addr.to_string(), e))?;
+        let addr = addrs[0].clone();
+        event_sink.emit_connecting(addr.clone());
+        let conn = addr.connect()
+            .map_err(|e| Error::Connect(server_addr.to_string(), e))?;
 
-        let client = Registered::new(client_addr, client_token, client);
+        let client = Registered::new(client_addr.to_string(), client_token, client);
         let mut server = Registered::new(server_addr.to_string(), server_token, conn);
         server.need(Some(Interest::WRITABLE));
         server
@@ -146,8 +139,8 @@ impl Connecting {
 
         // Check peer_name to see if we're really connected.
         let err = match server.attempt(Interest::WRITABLE, |conn| conn.peer_addr()) {
-            Ok(peer_name) => {
-                sink.emit_connected(peer_name.to_string());
+            Ok(peer) => {
+                sink.emit_connected(peer);
                 let running = Running::from(self);
                 return running.process(sink, registry);
             }
@@ -166,8 +159,8 @@ impl Connecting {
 
 #[derive(Debug)]
 struct Running {
-    client: Registered<TcpStream>,
-    server: Registered<TcpStream>,
+    client: Registered<MioStream>,
+    server: Registered<MioStream>,
     upstream: Copying,
     downstream: Copying,
 }
@@ -214,13 +207,17 @@ impl Running {
 
         client
             .update_registration(registry)
-            .map_err(|err| {
-                Error::Forward { doing: "registering", side: "client", err }
+            .map_err(|err| Error::Forward {
+                doing: "registering",
+                side: "client",
+                err,
             })?;
         server
             .update_registration(registry)
-            .map_err(|err| {
-                Error::Forward { doing: "registering", side: "server", err }
+            .map_err(|err| Error::Forward {
+                doing: "registering",
+                side: "server",
+                err,
             })?;
 
         if upstream.finished() && downstream.finished() {
@@ -257,8 +254,8 @@ impl Copying {
         &mut self,
         direction: Direction,
         sink: &mut ConnectionSink,
-        rd: &mut Registered<TcpStream>,
-        wr: &mut Registered<TcpStream>,
+        rd: &mut Registered<MioStream>,
+        wr: &mut Registered<MioStream>,
     ) -> Result<bool> {
         assert!(self.unsent_data <= self.free_space);
         assert!(self.free_space <= Self::BUFSIZE);
@@ -286,11 +283,13 @@ impl Copying {
                 Err(e) if would_block(&e) => {
                     // don't touch progress
                 }
-                Err(err) => return Err(Error::Forward {
-                    doing: "writing",
-                    side: direction.receiver(),
-                    err
-                }),
+                Err(err) => {
+                    return Err(Error::Forward {
+                        doing: "writing",
+                        side: direction.receiver(),
+                        err,
+                    })
+                }
             }
         }
 
@@ -299,9 +298,6 @@ impl Copying {
             self.free_space = 0;
             if self.can_write && !self.can_read {
                 // No data in the buffer and no option to get more
-                // Do not emit ShutdownWrite because the user has already seen
-                // the ShutdownRead
-                // sink.emit_shutdown_write(direction, 0);
                 self.can_write = false;
                 let _ = wr.source.shutdown(std::net::Shutdown::Write);
             }
@@ -323,7 +319,6 @@ impl Copying {
                 }
                 Ok(0) => {
                     // eof
-                    sink.emit_data(direction, &[]);
                     progress = true;
                     sink.emit_shutdown_read(direction);
                     self.can_read = false;
@@ -332,11 +327,13 @@ impl Copying {
                 Err(e) if would_block(&e) => {
                     // don't touch progress
                 }
-                Err(err) => return Err(Error::Forward {
-                    doing: "reading",
-                    side: direction.sender(),
-                    err
-                }),
+                Err(err) => {
+                    return Err(Error::Forward {
+                        doing: "reading",
+                        side: direction.sender(),
+                        err,
+                    })
+                }
             }
         }
 
