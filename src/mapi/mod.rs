@@ -41,7 +41,7 @@ impl State {
                     None,
                     format_args!("INCOMING on {local} from {peer}"),
                 )?;
-                self.add_connection(id);
+                self.add_connection(id, peer.is_unix());
             }
 
             MapiEvent::Connecting { id, remote } => {
@@ -118,10 +118,17 @@ impl State {
         Ok(())
     }
 
-    fn add_connection(&mut self, id: &ConnectionId) {
+    fn add_connection(&mut self, id: &ConnectionId, unix_client: bool) {
         let level = self.level;
-        let upstream = Accumulator::new(*id, Direction::Upstream, level, self.force_binary);
-        let downstream = Accumulator::new(*id, Direction::Downstream, level, self.force_binary);
+        let upstream = Accumulator::new(
+            *id,
+            Direction::Upstream,
+            level,
+            self.force_binary,
+            unix_client,
+        );
+        let downstream =
+            Accumulator::new(*id, Direction::Downstream, level, self.force_binary, false);
         let new = (upstream, downstream);
         let prev = self.accs.insert(*id, new);
         if prev.is_some() {
@@ -168,13 +175,19 @@ pub struct Accumulator {
 }
 
 impl Accumulator {
-    fn new(id: ConnectionId, direction: Direction, level: Level, force_binary: bool) -> Self {
+    fn new(
+        id: ConnectionId,
+        direction: Direction,
+        level: Level,
+        force_binary: bool,
+        unix_client: bool,
+    ) -> Self {
         Accumulator {
             id,
             direction,
             level,
             force_binary,
-            analyzer: Analyzer::new(),
+            analyzer: Analyzer::new(unix_client),
             binary: Binary::new(),
             buf: Vec::with_capacity(8192),
         }
@@ -206,7 +219,7 @@ impl Accumulator {
 
     fn handle_frame(&mut self, renderer: &mut Renderer, mut data: &[u8]) -> Result<(), io::Error> {
         while let Some(chunk) = self.analyzer.split_chunk(&mut data) {
-            if self.analyzer.was_head() {
+            if !self.analyzer.was_body() {
                 continue;
             }
 

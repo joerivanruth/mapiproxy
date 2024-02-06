@@ -4,6 +4,7 @@
 pub enum Analyzer {
     Head {
         boundary: bool,
+        was_body: bool,
     },
     PartialHead {
         byte1: u8,
@@ -13,11 +14,17 @@ pub enum Analyzer {
         len: u16,
         last: bool,
     },
+    Unix0,
+    Error,
 }
 
 impl Analyzer {
-    pub fn new() -> Self {
-        Analyzer::Head { boundary: true }
+    pub fn new(unix_client: bool) -> Self {
+        if unix_client {
+            Analyzer::Unix0
+        } else {
+            Analyzer::Head { boundary: true, was_body: false, }
+        }
     }
 
     pub fn split_chunk<'a>(&mut self, data: &mut &'a [u8]) -> Option<&'a [u8]> {
@@ -47,7 +54,7 @@ impl Analyzer {
                     still_needed, last, ..
                 },
                 _,
-            ) if *still_needed as usize <= data.len() => (*still_needed, Head { boundary: *last }),
+            ) if *still_needed as usize <= data.len() => (*still_needed, Head { was_body: true, boundary: *last }),
 
             (
                 Body {
@@ -70,6 +77,12 @@ impl Analyzer {
             }
 
             (_, []) => return None,
+
+            (Error, _) => (u16::try_from(data.len()).unwrap_or(u16::MAX), Error),
+
+            (Unix0, [0x30, ..]) => (1, Self::Head { was_body: false, boundary: true }),
+
+            (Unix0, [_, ..]) => (1, Self::Error),
         };
         *self = new_state;
         Some(taken as usize)
@@ -79,12 +92,20 @@ impl Analyzer {
         // little endian
         let n = *byte1 as u16 + 256 * *byte2 as u16;
         let len = n / 2;
-        let last = n & 1 > 0;
-        Self::Body {
-            still_needed: len,
-            len,
-            last,
+        if len < 8190 {
+            let last = n & 1 > 0;
+            Self::Body {
+                still_needed: len,
+                len,
+                last,
+            }
+        } else {
+            Self::Error
         }
+    }
+
+    pub fn was_error(&self) -> bool {
+        matches!(self, Self::Error)
     }
 
     pub fn was_head(&self) -> bool {
@@ -97,23 +118,32 @@ impl Analyzer {
         }
     }
 
+    pub fn was_body(&self) -> bool {
+        match self {
+            Self::Body { still_needed, len, .. } => still_needed < len,
+            Self::Head { was_body, .. } => *was_body,
+            _ => false,
+        }
+    }
+
     pub fn was_block_boundary(&self) -> bool {
         matches!(self, Self::Head { .. })
     }
 
     pub fn was_message_boundary(&self) -> bool {
-        matches!(self, Self::Head { boundary: true })
+        matches!(self, Self::Head { boundary: true, .. })
     }
 
     pub fn check_incomplete(&self) -> Result<(), &'static str> {
         let msg = match self {
-            Analyzer::Head { boundary: true } => return Ok(()),
-            Analyzer::Head { boundary: false } => {
+            Analyzer::Head { boundary: true, .. } => return Ok(()),
+            Analyzer::Head { boundary: false, .. } => {
                 "on a block boundary but not on a message boundary"
             }
             Analyzer::PartialHead { .. } => "in the middle of the header block",
             Analyzer::Body { last: false, .. } => "in the middle of a block",
             Analyzer::Body { last: true, .. } => "in the middle of the last block of the message",
+            Analyzer::Error | Analyzer::Unix0 => return Ok(()),
         };
         Err(msg)
     }
