@@ -1,8 +1,7 @@
 mod analyzer;
 
 use std::{
-    collections::HashMap,
-    io::{self, ErrorKind},
+    collections::HashMap, io::{self, ErrorKind}
 };
 
 use crate::{
@@ -172,6 +171,7 @@ pub struct Accumulator {
     analyzer: Analyzer,
     binary: Binary,
     buf: Vec<u8>,
+    error_reported: bool,
 }
 
 impl Accumulator {
@@ -190,6 +190,7 @@ impl Accumulator {
             analyzer: Analyzer::new(unix_client),
             binary: Binary::new(),
             buf: Vec::with_capacity(8192),
+            error_reported: false,
         }
     }
 
@@ -206,19 +207,58 @@ impl Accumulator {
             self.direction,
             &[&format_args!("{n} bytes", n = data.len())],
         )?;
+        let mut n = 0;
+        let mut error_at = None;
         while let Some(head) = self.analyzer.split_chunk(&mut data) {
-            let is_head = self.analyzer.was_head();
+            let style = if self.analyzer.was_head() {
+                Style::Header
+            } else if self.analyzer.was_error() {
+                if !self.error_reported {
+                    error_at = Some(n);
+                    self.error_reported = true;
+                }
+                Style::Error
+            } else {
+                Style::Normal
+            };
+            n += head.len();
             for b in head {
-                self.binary.add(*b, is_head, renderer)?;
+                self.binary.add(*b, style, renderer)?;
             }
         }
         self.binary.finish(renderer)?;
-        renderer.footer(&[])?;
+        if let Some(pos) = error_at {
+            renderer.footer(&[&format!("encountered mapi protocol error at byte {pos}/{n}")])?;
+        } else {
+            renderer.footer(&[])?;
+        }
         Ok(())
     }
 
     fn handle_frame(&mut self, renderer: &mut Renderer, mut data: &[u8]) -> Result<(), io::Error> {
-        while let Some(chunk) = self.analyzer.split_chunk(&mut data) {
+        loop {
+            let whole = data;
+            let Some(chunk) = self.analyzer.split_chunk(&mut data)
+            else { break; };
+
+            if self.analyzer.was_error() {
+                if !self.buf.is_empty() {
+                    let kind = if self.level == Level::Messages {
+                        "incomplete message before error"
+                    } else {
+                        "incomplete block before error"
+                    };
+                    renderer.header(self.id, self.direction, &[&kind])?;
+                    self.dump_frame_as_binary(&self.buf, renderer)?;
+                    renderer.footer(&[])?;
+                    self.buf.clear();
+                    self.level = Level::Raw;
+                }
+                renderer.message(Some(self.id), Some(self.direction), "mapi protocol error")?;
+                self.error_reported = true;
+                self.level = Level::Raw;
+                return self.handle_raw(renderer, whole);
+            }
             if !self.analyzer.was_body() {
                 continue;
             }
@@ -288,7 +328,7 @@ impl Accumulator {
     fn dump_frame_as_binary(&self, data: &[u8], renderer: &mut Renderer) -> io::Result<()> {
         let mut bin = Binary::new();
         for b in data {
-            bin.add(*b, false, renderer)?;
+            bin.add(*b, Style::Normal, renderer)?;
         }
         bin.finish(renderer)?;
         Ok(())
@@ -323,20 +363,20 @@ impl Accumulator {
 
 #[derive(Debug)]
 struct Binary {
-    row: [(u8, bool); 16],
+    row: [(u8, Style); 16],
     col: usize,
 }
 
 impl Binary {
     fn new() -> Self {
         Binary {
-            row: [(0, false); 16],
+            row: [(0, Style::Normal); 16],
             col: 0,
         }
     }
 
-    fn add(&mut self, byte: u8, is_head: bool, renderer: &mut Renderer) -> io::Result<()> {
-        self.row[self.col] = (byte, is_head);
+    fn add(&mut self, byte: u8, style: Style, renderer: &mut Renderer) -> io::Result<()> {
+        self.row[self.col] = (byte, style);
         self.col += 1;
 
         if self.col == 16 {
@@ -356,32 +396,28 @@ impl Binary {
     fn write_out(&mut self, renderer: &mut Renderer, _keep_head_state: bool) -> io::Result<()> {
         const HEX_DIGITS: [u8; 16] = *b"0123456789abcdef";
         let mut cur_head = false;
-        for (i, (byte, is_head)) in self.row[..self.col].iter().cloned().enumerate() {
-            self.put_sep(i, &mut cur_head, is_head, renderer)?;
+        for (i, (byte, style)) in self.row[..self.col].iter().cloned().enumerate() {
+            self.put_sep(i, &mut cur_head, style, renderer)?;
 
             let hi = HEX_DIGITS[byte as usize / 16];
             let lo = HEX_DIGITS[byte as usize & 0xF];
 
-            let style = if is_head {
-                Style::Header
-            } else {
-                Style::Normal
-            };
             renderer.style(style)?;
             renderer.put([hi, lo])?;
             renderer.style(Style::Normal)?;
         }
 
         for i in self.col..16 {
-            self.put_sep(i, &mut cur_head, false, renderer)?;
+            self.put_sep(i, &mut cur_head, Style::Frame, renderer)?;
             renderer.put(b"__")?;
         }
 
         // if the sep includes a style change, this is its
         // chance to wrap it up
-        self.put_sep(16, &mut cur_head, false, renderer)?;
+        self.put_sep(16, &mut cur_head, Style::Normal, renderer)?;
 
-        for (byte, _) in &self.row[..self.col] {
+        for (byte, style) in &self.row[..self.col] {
+            renderer.style(*style)?;
             renderer.put(Self::readable(&[*byte]))?;
         }
 
@@ -395,7 +431,7 @@ impl Binary {
         &self,
         i: usize,
         in_head: &mut bool,
-        is_head: bool,
+        style: Style,
         renderer: &mut Renderer,
     ) -> Result<(), io::Error> {
         let extra_space: [u8; 17] = [
@@ -408,6 +444,7 @@ impl Binary {
         let spaces = "          ";
         let extra = extra_space[i] as usize;
         let (open, close) = ("⟨", "⟩");
+        let is_head = style == Style::Header;
         // let (open, close) = ("«", "»");
         match (*in_head, is_head) {
             (false, true) => {
