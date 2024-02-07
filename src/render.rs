@@ -134,6 +134,7 @@ impl Renderer {
             Style::Normal => "\u{1b}[m",
             Style::Header => "\u{1b}[1m",
             Style::Frame => "\u{1b}[36m",
+            Style::Error => "\u{1b}[31m",
         };
         self.out.write_all(escape_sequence.as_bytes())?;
         Ok(())
@@ -171,6 +172,7 @@ impl From<(Option<ConnectionId>, Option<Direction>)> for IdStream {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Style {
     Normal,
+    Error,
     Frame,
     Header,
 }
