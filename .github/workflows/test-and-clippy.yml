@@ -1,0 +1,29 @@
+
+
+name: Build, Test and Clippy
+on:
+  push:
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+
+  buildntest:
+    # Hope ubuntu-20.04 is old enough
+    runs-on: ubuntu-20.04
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Show toolchain versions
+        run: |
+          cargo --version
+          rustc --version
+          rustup --version 2>/dev/null
+
+      - name: cargo test
+        run: cargo test
+
+      - name: cargo clippy
+        run: cargo clippy
