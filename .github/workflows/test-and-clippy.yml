@@ -3,24 +3,21 @@
 name: Build, Test and Clippy
 on:
   push:
+    branch:
 env:
   CARGO_TERM_COLOR: always
 jobs:
 
-  buildntest:
-    # Hope ubuntu-20.04 is old enough
-    runs-on: ubuntu-20.04
+  test:
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: check out code
         uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Show toolchain versions
-        run: |
-          cargo --version
-          rustc --version
-          rustup --version 2>/dev/null
 
       - name: cargo test
         run: cargo test
