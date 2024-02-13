@@ -1,0 +1,85 @@
+
+
+name: Create release binaries
+on:
+  # can be invoked manually
+  workflow_dispatch:
+  # can be invoked from other workflows
+  workflow_call:
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+
+  unix:
+    strategy:
+      matrix:
+        os: [ linux, macos ]
+        include:
+          - os: linux
+            runner: ubuntu-20.04
+          - os: macos
+            runner: macos-11
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine tar file name
+        id: tarname
+        run: |
+          cargo run --bin x -- version tar_file_name=mapiproxy-@-${{ matrix.os }}.tar.gz >> "$GITHUB_OUTPUT"
+
+      - name: Test and clippy
+        run: |
+          cargo test
+          cargo clippy
+
+      - name: Build release binaries
+        run: |
+          test -n "${{ steps.tarname.outputs.tar_file_name }}"
+          cargo build --release
+          strip target/release/mapiproxy
+          tar -C target/release -zcvvf ${{ steps.tarname.outputs.tar_file_name }} mapiproxy
+
+      - name: upload artifacts
+        id: upload-step
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-binaries
+          path: ${{ steps.tarname.outputs.tar_file_name }}
+          if-no-files-found: error
+
+  windows:
+    name: Windows binaries
+    runs-on: windows-latest
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test and clippy
+        run: |
+          cargo test
+          cargo clippy
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Determine tar file name
+        id: tarname
+        run: |
+          cargo run --release --bin x -- version zip_file_name=mapiproxy-@-windows.zip | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Create zip file
+        run: Compress-Archive -Path target\release\mapiproxy.exe -DestinationPath ${{ steps.tarname.outputs.zip_file_name }}
+
+      - name: upload artifacts
+        id: upload-step
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: ${{ steps.tarname.outputs.zip_file_name }}
+          if-no-files-found: error

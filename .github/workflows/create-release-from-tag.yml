@@ -1,0 +1,72 @@
+
+
+name: Create release from tag
+on:
+  push:
+    tags:
+    - v[0-9]*
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+
+  prepare:
+    name: Prepare for release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build x helper
+        run: cargo build --bin x
+
+      - name: Determine version number
+        run: cargo run --bin x -- version mapiproxy_version= >>"$GITHUB_OUTPUT"
+
+      - name: Verify tag name against version number
+        run: cargo run --bin x -- checktag ${{ github.ref_name }}
+
+      - name: Generate release notes
+        run: cargo run --bin x -- relnotes >relnotes.md
+
+      - name: Store release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: relnotes
+          path: relnotes.md
+          if-no-files-found: error
+
+
+  build:
+    # note the ./. it's essential
+    uses: ./.github/workflows/create-binaries.yml
+
+
+  release:
+    name: Create release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - run: |
+          ls -R
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${{ github.ref_name }}"
+          gh release create ${{ github.ref_name }} \
+            --title 'mapiproxy ${{ needs.prepare.outputs.mapiproxy_version }}' \
+            --notes-file relnotes.md \
+            mapiproxy*.tar.gz mapiproxy*.zip
+
