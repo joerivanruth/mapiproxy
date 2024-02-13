@@ -519,8 +519,8 @@ fn combine_interests(left: Option<Interest>, right: Option<Interest>) -> Option<
 #[test]
 fn test_interest_or() {
     let x = Some(Interest::READABLE);
-    let y = Some(Interest::PRIORITY);
+    let y = Some(Interest::WRITABLE);
     let z = combine_interests(x, y);
 
-    assert_eq!(z, Some(Interest::READABLE | Interest::PRIORITY));
+    assert_eq!(z, Some(Interest::READABLE | Interest::WRITABLE));
 }
