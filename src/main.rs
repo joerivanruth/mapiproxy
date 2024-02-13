@@ -14,18 +14,23 @@ use proxy::network::MonetAddr;
 use proxy::Proxy;
 use render::Renderer;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
-Addr:
-    PORT, for example 50000
-    HOST:PORT, for example localhost:50000
+
+LISTEN_ADDR and FORWARD_ADDR:
+    port, for example, 50000
+    host:port, for example, localhost:50000 or 127.0.0.1:50000
     /PATH/TO/SOCK, for example, /tmp/.s.monetdb.50000
+
 Options:
     -m --messages       Dump whole messages
     -b --blocks         Dump individual blocks
     -r --raw            Dump bytes as they come in
     -B --binary         Force dumping as binary
     --help              This help
+    --version           Version info
 ";
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -53,7 +58,13 @@ fn mymain() -> AResult<()> {
             "-r" | "--raw" => level = Level::Raw,
             "-B" | "--binary" => force_binary = true,
             "--help" => {
+                println!("Mapiproxy version {VERSION}");
+                println!();
                 println!("{USAGE}");
+                return Ok(());
+            }
+            "--version" => {
+                println!("Mapiproxy version {VERSION}");
                 return Ok(());
             }
             _ => return Err(ArgError::unknown_flag(flag).into()),
