@@ -22,7 +22,7 @@ Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
 LISTEN_ADDR and FORWARD_ADDR:
     port, for example, 50000
     host:port, for example, localhost:50000 or 127.0.0.1:50000
-    /PATH/TO/SOCK, for example, /tmp/.s.monetdb.50000
+    /path/to/unixsock, for example, /tmp/.s.monetdb.50000
 
 Options:
     -m --messages       Dump whole messages
