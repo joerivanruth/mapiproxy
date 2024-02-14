@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result as AResult};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const USAGE: &str = "\
-    Usage: cargo run --bin x -- CMD [ARGS]
+    Usage: cargo run --example x -- CMD [ARGS]
     Cmd:
         x version [TEMPLATE]        template is prefix or has '@' to be replaced with version
         checktag TAG                check if tag (v1.2.3) matches version number 1.2.3
