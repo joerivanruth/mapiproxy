@@ -13,11 +13,11 @@ jobs:
   unix:
     strategy:
       matrix:
-        os: [ linux, macos ]
+        os: [ linux, macos-intel ]
         include:
           - os: linux
             runner: ubuntu-20.04
-          - os: macos
+          - os: macos-intel
             runner: macos-11
     runs-on: ${{ matrix.runner }}
     steps:
@@ -38,7 +38,6 @@ jobs:
 
       - name: Build release binaries
         run: |
-          test -n "${{ steps.tarname.outputs.tar_file_name }}"
           cargo build --release
           strip target/release/mapiproxy
           tar -C target/release -zcvvf ${{ steps.tarname.outputs.tar_file_name }} mapiproxy
