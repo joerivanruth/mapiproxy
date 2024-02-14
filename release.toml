@@ -1,0 +1,19 @@
+# config for the 'cargo release' command
+# (install that with: cargo install cargo-release)
+
+push = true
+push-remote = "origin"
+
+pre-release-commit-message = "Release {{crate_name}} version {{version}}"
+tag = true
+tag-message = "Release {{crate_name}} {{version}}"
+
+# do not publish to crates.io, also see publish = false at the top
+publish = false
+
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "## mapiproxy NEXTVERSION - .*"
+exactly = 1
+replace = "## mapiproxy NEXTVERSION - YYYY-MM-DD\n\n\n## mapiproxy {{version}} - {{date}}"
+

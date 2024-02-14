@@ -3,33 +3,12 @@ name = "mapiproxy"
 version = "0.5.0-alpha.1"
 edition = "2021"
 
+# also forbidden in release.toml
 publish = false
 
 default-run = "mapiproxy"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[package.metadata.release]
-# config for the 'cargo release' command
-# (install that with: cargo install cargo-release)
-
-push = true
-push-remote = "origin"
-
-pre-release-commit-message = "Release {{crate_name}} version {{version}}"
-tag = true
-tag-message = "Release {{crate_name}} {{version}}"
-
-# do not publish to crates.io, also see publish = false at the top
-publish = false
-
-[[package.metadata.release.pre-release-replacements]]
-file = "CHANGELOG.md"
-search = "## mapiproxy NEXTVERSION - .*"
-exactly = 1
-replace = "## mapiproxy NEXTVERSION - YYYY-MM-DD\n\n\n## mapiproxy {{version}} - {{date}}"
-
-
 
 [dependencies]
 anyhow = "1.0.79"
