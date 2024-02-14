@@ -25,7 +25,7 @@ LISTEN_ADDR and FORWARD_ADDR:
     /path/to/unixsock, for example, /tmp/.s.monetdb.50000
 
 Options:
-    -m --messages       Dump whole messages
+    -m --messages       Dump whole messages (default)
     -b --blocks         Dump individual blocks
     -r --raw            Dump bytes as they come in
     -B --binary         Force dumping as binary
@@ -47,7 +47,7 @@ fn main() -> ExitCode {
 fn mymain() -> AResult<()> {
     install_panic_hook();
 
-    let mut level = Level::Raw;
+    let mut level = Level::Messages;
     let mut force_binary = false;
 
     let mut args = ArgSplitter::from_env();
