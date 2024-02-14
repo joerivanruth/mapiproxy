@@ -92,7 +92,7 @@ impl Analyzer {
         // little endian
         let n = *byte1 as u16 + 256 * *byte2 as u16;
         let len = n / 2;
-        if len < 8190 {
+        if len <= 8190 {
             let last = n & 1 > 0;
             Self::Body {
                 still_needed: len,
