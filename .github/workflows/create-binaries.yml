@@ -29,7 +29,7 @@ jobs:
       - name: Determine tar file name
         id: tarname
         run: |
-          cargo run --bin x -- version tar_file_name=mapiproxy-@-${{ matrix.os }}.tar.gz >> "$GITHUB_OUTPUT"
+          cargo run --example x -- version tar_file_name=mapiproxy-@-${{ matrix.os }}.tar.gz >> "$GITHUB_OUTPUT"
 
       - name: Test and clippy
         run: |
@@ -70,7 +70,7 @@ jobs:
       - name: Determine tar file name
         id: tarname
         run: |
-          cargo run --release --bin x -- version zip_file_name=mapiproxy-@-windows.zip | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          cargo run --release --example x -- version zip_file_name=mapiproxy-@-windows.zip | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Create zip file
         run: Compress-Archive -Path target\release\mapiproxy.exe -DestinationPath ${{ steps.tarname.outputs.zip_file_name }}

@@ -18,16 +18,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build x helper
-        run: cargo build --bin x
+        run: cargo build --example x
 
       - name: Determine version number
-        run: cargo run --bin x -- version mapiproxy_version= >>"$GITHUB_OUTPUT"
+        run: cargo run --example x -- version mapiproxy_version= >>"$GITHUB_OUTPUT"
 
       - name: Verify tag name against version number
-        run: cargo run --bin x -- checktag ${{ github.ref_name }}
+        run: cargo run --example x -- checktag ${{ github.ref_name }}
 
       - name: Generate release notes
-        run: cargo run --bin x -- relnotes >relnotes.md
+        run: cargo run --example x -- relnotes >relnotes.md
 
       - name: Store release notes
         uses: actions/upload-artifact@v4
