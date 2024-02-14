@@ -466,8 +466,9 @@ impl Binary {
     }
 
     fn readable(byte: &[u8; 1]) -> &[u8] {
+        // note that the readable range does not include 0x7f (DEL)
         let s = match byte[0] {
-            b' '..=127 => return byte.as_ref(),
+            b' '..=0x7e => return byte.as_ref(),
             b'\n' => "↵",
             b'\t' => "→",
             0 => "░",
