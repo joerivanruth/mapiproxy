@@ -1,5 +1,6 @@
-# config for the 'cargo release' command
-# (install that with: cargo install cargo-release)
+# Config for the 'cargo release' command.
+# This can be installed with `cargo install cargo-release`.
+# Documentation: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
 
 push = true
 push-remote = "origin"

@@ -2,7 +2,14 @@ MAPI PROXY
 ==========
 
 Proxy to inspect [MonetDB] network traffic.
-Pretty-prints raw bytes, low-level blocks or higher-level messages.
+
+[MonetDB]: https://www.monetdb.org/
+
+The MonetDB network protocol is called MAPI, hence the name.
+
+The proxy can listen on and connect to TCP sockets, Unix Domain sockets or both.
+The MAPI protocol is slightly different between the two, the proxy will
+automatically adjust it when proxying between the two.
 
 Usage:
 
@@ -22,5 +29,3 @@ Options:
     --help              This help
     --version           Version info
 ```
-
-[MonetDB]: https://www.monetdb.org/
