@@ -70,7 +70,16 @@ fn relnotes(mut args: impl Iterator<Item = String>) -> AResult<()> {
     let changelog_file = "CHANGELOG.md";
     let lines = read_file(changelog_file)?;
 
-    let header = format!("## mapiproxy {VERSION} - ");
+    let parsed_version = semver::Version::parse(VERSION)
+        .with_context(|| "Could not parse version number {VERSION:?}")?;
+    let is_prerelease = parsed_version.pre.is_empty();
+    let look_for = if is_prerelease {
+        VERSION
+    } else {
+        "NEXTVERSION"
+    };
+    let header = format!("## mapiproxy {look_for} - ");
+
     let Some(start) = lines.iter().position(|line| line.starts_with(&header)) else {
         bail!("Could not find header {header:?} in {changelog_file}");
     };
