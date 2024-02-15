@@ -1,7 +1,3 @@
-mod mapi;
-mod proxy;
-mod render;
-
 use std::panic::PanicInfo;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
@@ -9,14 +5,14 @@ use std::{io, panic, process, thread};
 use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
 
-use proxy::event::EventSink;
-use proxy::network::MonetAddr;
-use proxy::Proxy;
-use render::Renderer;
+use crate::{
+    mapi,
+    proxy::{event::EventSink, network::MonetAddr, Proxy},
+    render::Renderer,
+    Level, VERSION,
+};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const USAGE: &str = "\
+pub const USAGE: &str = "\
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
 
 LISTEN_ADDR and FORWARD_ADDR:
@@ -33,14 +29,7 @@ Options:
     --version           Version info
 ";
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-enum Level {
-    Raw,
-    Blocks,
-    Messages,
-}
-
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     argsplitter::main_support::report_errors(USAGE, mymain())
 }
 
