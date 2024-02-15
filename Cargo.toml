@@ -1,6 +1,6 @@
 [package]
 name = "mapiproxy"
-version = "0.5.0-alpha.1"
+version = "0.5.0-alpha.2"
 edition = "2021"
 
 # also forbidden in release.toml
