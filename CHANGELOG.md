@@ -14,7 +14,7 @@ The basics work:
 - Adjust the initial '0' (0x30) byte when proxying between Unix and TCP or vice
   versa
 
-- Render as raw reads and writes, full MAPI blocks and full MAPI messages
+- Render either as raw reads and writes, full MAPI blocks or full MAPI messages
 
 - Render as text or as a hex dump
 
