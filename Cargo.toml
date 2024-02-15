@@ -13,7 +13,11 @@ default-run = "mapiproxy"
 [dependencies]
 anyhow = "1.0.79"
 argsplitter = "0.5.0"
+itertools = "0.12.1"
 mio = { version = "0.8.10", features = [ "net", "os-ext", "os-poll" ] }
 slab = "0.4.9"
 smallvec = { version = "1.13.1", features = [ "union" ] }
 thiserror = "1.0.56"
+
+[dev-dependencies]
+diff = "0.1.13"
