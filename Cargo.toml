@@ -21,3 +21,5 @@ thiserror = "1.0.56"
 
 [dev-dependencies]
 diff = "0.1.13"
+semver = "1.0.21"
+
