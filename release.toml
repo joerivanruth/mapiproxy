@@ -3,7 +3,6 @@
 # Documentation: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
 
 push = true
-push-remote = "origin"
 
 pre-release-hook = [ "cargo", "run", "--example", "x", "--", "checkreadme" ]
 pre-release-commit-message = "Release {{crate_name}} version {{version}}"
