@@ -1,56 +1,41 @@
 Code layout overview
 ====================
 
+The proxy is written in Rust.
+
 In main.rs we take care of setting everything up.
 
-In reactor.rs we do all socket i/o.
-The reactor reports events, for example,
+The `proxy` module takes care of all network IO. It's currently based on [mio],
+a nonblocking IO library, because that seemed to be the best way to support
+out-of-band messages. That requirement has gone away and mio could now probably
+be replaced with a simpler threaded implementation, but that hasn't happened
+yet.
 
-* new connection came in on ip:port from ip:port, succesfully
-  forwarded to ip:port, or connection refused by host:port.
+The proxy is not aware of the structure of the communication protocol, it just
+forwards bytes. There is one exception, when connecting to a Unix Domain socket,
+the MAPI protocol requires the client to send an initial '0' (0x30) byte, the
+proxy inserts this when forwarding a TCP connection to a Unix socket, and strips
+it when forwarding a Unix connection to a TCP socket.
 
-* proxy inserted/deleted '0' byte 
+The proxy records what's going on by sending a series of `MapiEvent`s on a
+channel. The main thread receives these messages and passes them to the `mapi`
+module, which splits them into separate streams, one for each connection, and
+analyzes the MAPI message structure. Depending on the mode it will display the
+data immediately or it will buffer it to display complete MAPI blocks or
+messages. The `mapi` module is also the place where it is decided whether to
+display the data as a hex dump or as text.
 
-* bytes received from client
+The `mapi` module does not write output itself, instead it invokes methods on a
+`Renderer` object passed by the main thread. The renderer can display
+single-line messages or multi-line blocks with a header and a footer. The data
+in the blocks can also be colored.
 
-* bytes received from server
-
-* client/server closed read/write end of the connection,
-  N bytes could not be delivered.
-
-* Out of Band (OOB) message detected, forwarded
-
-* Connection fully closed
-
-OOB handling is inherently lossy, the location in the TCP stream where it
-occurred cannot be preserved.
-
-In mapi.rs we take the events and reconstruct MAPI blocks and messages from
-them, and format them. Formatting also involves replacing CR with '↵', TAB with
-'→', etc.
-
-Finally, dump.rs contains the code that wraps the formatted messages in
-visual block boundaries and writes them to stdout. Possibly, in the future
-dump.rs may offer an API that allows the MAPI module to use some colors, etc,
-depending on the capabilities of the output device.
-
-Module network.rs exists to paper over the differences between TCP sockets
-and Unix Domain sockets.
+Currently there is only one `Renderer` implementation which renders the output
+using Unicode drawing characters and vt100/ansi color escape codes. We plan to
+soon add a mode where it omits the color escapes, and when writing protocol
+documentation it might be useful to have a mode where the output is rendered in
+HTML.
 
 
-To do
-=====
-
-1. Implement a TCP reactor using mio
-
-   (why mio? tokio doesn't seem to expose OOB and using mio directly actually seems
-   to simplify some things, it's kind of made for it)
-
-2. Generalize it to Unix
-
-   - socket types
-
-   - '0' insertion/removal
-
-3. Add / import MAPI parsing
+[mio]: https://github.com/tokio-rs/mio
 
