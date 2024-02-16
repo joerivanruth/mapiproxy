@@ -5,11 +5,14 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
+- The use of colors can now be configured with --color=always|never|auto.
+
 
 ## mapiproxy 0.5.1 - 2024-02-16
 
 - no user visible changes, release only because v0.5.1-alpha.1
   exists on crates.io.
+
 
 ## mapiproxy 0.5.0 - 2024-02-16
 

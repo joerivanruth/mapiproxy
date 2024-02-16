@@ -8,7 +8,7 @@ use std::panic::PanicInfo;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
 
-use anyhow::Result as AResult;
+use anyhow::{bail, Result as AResult};
 use argsplitter::{ArgError, ArgSplitter};
 
 use crate::{
@@ -36,6 +36,7 @@ fn mymain() -> AResult<()> {
 
     let mut level = Level::Messages;
     let mut force_binary = false;
+    let mut colored = None;
 
     let mut args = ArgSplitter::from_env();
     while let Some(flag) = args.flag()? {
@@ -44,6 +45,14 @@ fn mymain() -> AResult<()> {
             "-b" | "--blocks" => level = Level::Blocks,
             "-r" | "--raw" => level = Level::Raw,
             "-B" | "--binary" => force_binary = true,
+            "--color" => {
+                colored = match args.param()?.to_lowercase().as_str() {
+                    "always" => Some(true),
+                    "auto" => None,
+                    "never" => Some(false),
+                    other => bail!("--color={other}: must be 'always', 'auto' or 'never'"),
+                }
+            }
             "--help" => {
                 println!("Mapiproxy version {VERSION}");
                 println!();
@@ -61,7 +70,9 @@ fn mymain() -> AResult<()> {
     let forward_addr: MonetAddr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
 
-    let mut renderer = Renderer::new(io::stdout());
+    let out = io::stdout();
+    let colored = colored.unwrap_or_else(|| is_terminal::is_terminal(&out));
+    let mut renderer = Renderer::new(colored, out);
 
     let (send_events, receive_events) = std::sync::mpsc::sync_channel(500);
     let sink = EventSink::new(move |event| {

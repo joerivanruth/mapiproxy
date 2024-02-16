@@ -9,6 +9,7 @@ use std::{
 use crate::proxy::event::{ConnectionId, Direction};
 
 pub struct Renderer {
+    colored: bool,
     last_time: Option<Instant>,
     out: BufWriter<Box<dyn io::Write + 'static + Send>>,
     current_style: Style,
@@ -16,10 +17,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(out: impl io::Write + 'static + Send) -> Self {
+    pub fn new(colored: bool, out: impl io::Write + 'static + Send) -> Self {
         let boxed: Box<dyn io::Write + 'static + Send> = Box::new(out);
         let buffered = BufWriter::with_capacity(4 * 8192, boxed);
         Renderer {
+            colored,
             out: buffered,
             current_style: Style::Normal,
             at_start: Some(Style::Normal),
@@ -123,8 +125,9 @@ impl Renderer {
         if style == self.current_style {
             return Ok(style);
         }
-        self.write_style(style)?;
-
+        if self.colored {
+            self.write_style(style)?;
+        }
         mem::swap(&mut self.current_style, &mut style);
         Ok(style)
     }
