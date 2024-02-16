@@ -4,15 +4,6 @@ mod mapi;
 mod proxy;
 mod render;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-enum Level {
-    Raw,
-    Blocks,
-    Messages,
-}
-
 use std::panic::PanicInfo;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
@@ -25,7 +16,16 @@ use crate::{
     render::Renderer,
 };
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub const USAGE: &str = include_str!("usage.txt");
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum Level {
+    Raw,
+    Blocks,
+    Messages,
+}
 
 pub fn main() -> ExitCode {
     argsplitter::main_support::report_errors(USAGE, mymain())
