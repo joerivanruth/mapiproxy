@@ -1,11 +1,19 @@
 [package]
 name = "mapiproxy"
 version = "0.5.0-alpha.2"
+description = "A proxy for debugging MonetDB's wire protocol"
+authors = [ "Joeri van Ruth <joeri.van.ruth@monetdbsolutions.com>" ]
+keywords = [ "monetdb", "mapi", "proxy" ]
+categories = [ "command-line-utilities", "database" ]
+license = "MPL-2.0"
+license-file = "LICENSE"
+
+# for now
+readme = "README.md"
+homepage = "https://github.com/joerivanruth/mapiproxy"
+repository = "https://github.com/joerivanruth/mapiproxy"
+
 edition = "2021"
-
-# also forbidden in release.toml
-publish = false
-
 default-run = "mapiproxy"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
