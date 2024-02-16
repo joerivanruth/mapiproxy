@@ -1,3 +1,18 @@
+#![doc = include_str!("../README.md")]
+
+mod mapi;
+mod proxy;
+mod render;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum Level {
+    Raw,
+    Blocks,
+    Messages,
+}
+
 use std::panic::PanicInfo;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
@@ -6,28 +21,11 @@ use anyhow::Result as AResult;
 use argsplitter::{ArgError, ArgSplitter};
 
 use crate::{
-    mapi,
     proxy::{event::EventSink, network::MonetAddr, Proxy},
     render::Renderer,
-    Level, VERSION,
 };
 
-pub const USAGE: &str = "\
-Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
-
-LISTEN_ADDR and FORWARD_ADDR:
-    port, for example, 50000
-    host:port, for example, localhost:50000 or 127.0.0.1:50000
-    /path/to/unixsock, for example, /tmp/.s.monetdb.50000
-
-Options:
-    -m --messages       Dump whole messages (default)
-    -b --blocks         Dump individual blocks
-    -r --raw            Dump bytes as they come in
-    -B --binary         Force dumping as binary
-    --help              This help
-    --version           Version info
-";
+pub const USAGE: &str = include_str!("usage.txt");
 
 pub fn main() -> ExitCode {
     argsplitter::main_support::report_errors(USAGE, mymain())

@@ -1,4 +1,7 @@
 //! This is a helper script, not really an example.
+//! We keep it in the examples/ subdirectory rather than
+//! src/bin/ because we don't want it to be installed by
+//! 'cargo install'.
 
 use std::{
     env,
@@ -10,15 +13,10 @@ use std::{
 use anyhow::{bail, Context, Result as AResult};
 
 use itertools::Itertools;
-use mapiproxy::VERSION;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const USAGE: &str = "\
-    Usage: cargo run --example x -- CMD [ARGS]
-    Cmd:
-        x version [TEMPLATE]        template is prefix or has '@' to be replaced with version
-        checktag TAG                check if tag (v1.2.3) matches version number 1.2.3
-        relnotes                    extract current entry from CHANGELOG.md
-        checkreadme [--fix]         make sure Usage output in README.md is up to date
 ";
 
 fn main() -> AResult<()> {
@@ -147,7 +145,7 @@ fn checkreadme(mut args: impl Iterator<Item = String>) -> AResult<()> {
         old_usage.push_str(line);
     }
 
-    let new_usage = mapiproxy::entrypoint::USAGE;
+    let new_usage = include_str!("../src/usage.txt");
 
     if old_usage == new_usage {
         return Ok(());
