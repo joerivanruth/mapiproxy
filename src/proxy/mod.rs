@@ -91,7 +91,7 @@ impl Proxy {
 
         if addrs.is_empty() {
             let err = io::Error::new(ErrorKind::NotFound, "listen address not found");
-            return Err(Error::StartListening(self.listen_addr.to_string(), err))
+            return Err(Error::StartListening(self.listen_addr.to_string(), err));
         }
         for addr in addrs {
             self.add_tcp_listener(addr)?;

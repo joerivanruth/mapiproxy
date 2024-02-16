@@ -23,7 +23,10 @@ impl Analyzer {
         if unix_client {
             Analyzer::Unix0
         } else {
-            Analyzer::Head { boundary: true, was_body: false, }
+            Analyzer::Head {
+                boundary: true,
+                was_body: false,
+            }
         }
     }
 
@@ -54,7 +57,13 @@ impl Analyzer {
                     still_needed, last, ..
                 },
                 _,
-            ) if *still_needed as usize <= data.len() => (*still_needed, Head { was_body: true, boundary: *last }),
+            ) if *still_needed as usize <= data.len() => (
+                *still_needed,
+                Head {
+                    was_body: true,
+                    boundary: *last,
+                },
+            ),
 
             (
                 Body {
@@ -80,7 +89,13 @@ impl Analyzer {
 
             (Error, _) => (u16::try_from(data.len()).unwrap_or(u16::MAX), Error),
 
-            (Unix0, [0x30, ..]) => (1, Self::Head { was_body: false, boundary: true }),
+            (Unix0, [0x30, ..]) => (
+                1,
+                Self::Head {
+                    was_body: false,
+                    boundary: true,
+                },
+            ),
 
             (Unix0, [_, ..]) => (1, Self::Error),
         };
@@ -120,7 +135,9 @@ impl Analyzer {
 
     pub fn was_body(&self) -> bool {
         match self {
-            Self::Body { still_needed, len, .. } => still_needed < len,
+            Self::Body {
+                still_needed, len, ..
+            } => still_needed < len,
             Self::Head { was_body, .. } => *was_body,
             _ => false,
         }
@@ -137,9 +154,9 @@ impl Analyzer {
     pub fn check_incomplete(&self) -> Result<(), &'static str> {
         let msg = match self {
             Analyzer::Head { boundary: true, .. } => return Ok(()),
-            Analyzer::Head { boundary: false, .. } => {
-                "on a block boundary but not on a message boundary"
-            }
+            Analyzer::Head {
+                boundary: false, ..
+            } => "on a block boundary but not on a message boundary",
             Analyzer::PartialHead { .. } => "in the middle of the header block",
             Analyzer::Body { last: false, .. } => "in the middle of a block",
             Analyzer::Body { last: true, .. } => "in the middle of the last block of the message",

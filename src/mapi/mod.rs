@@ -1,7 +1,8 @@
 mod analyzer;
 
 use std::{
-    collections::HashMap, io::{self, ErrorKind}
+    collections::HashMap,
+    io::{self, ErrorKind},
 };
 
 use crate::{
@@ -228,7 +229,9 @@ impl Accumulator {
         }
         self.binary.finish(renderer)?;
         if let Some(pos) = error_at {
-            renderer.footer(&[&format!("encountered mapi protocol error at byte {pos}/{n}")])?;
+            renderer.footer(&[&format!(
+                "encountered mapi protocol error at byte {pos}/{n}"
+            )])?;
         } else {
             renderer.footer(&[])?;
         }
@@ -238,8 +241,9 @@ impl Accumulator {
     fn handle_frame(&mut self, renderer: &mut Renderer, mut data: &[u8]) -> Result<(), io::Error> {
         loop {
             let whole = data;
-            let Some(chunk) = self.analyzer.split_chunk(&mut data)
-            else { break; };
+            let Some(chunk) = self.analyzer.split_chunk(&mut data) else {
+                break;
+            };
 
             if self.analyzer.was_error() {
                 if !self.buf.is_empty() {

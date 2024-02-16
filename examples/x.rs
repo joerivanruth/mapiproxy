@@ -123,7 +123,7 @@ fn checkreadme(mut args: impl Iterator<Item = String>) -> AResult<()> {
 
     // Parse the existing readme file
     let old_readme = read_filex(README_FILE)?;
-    let old_lines = old_readme.split_inclusive("\n").collect_vec();
+    let old_lines = old_readme.split_inclusive('\n').collect_vec();
     let Some(start) = old_lines
         .iter()
         .position(|line| line.starts_with(START_MARKER))
@@ -156,7 +156,7 @@ fn checkreadme(mut args: impl Iterator<Item = String>) -> AResult<()> {
     println!("{old_usage:?}");
 
     println!("Usage information has changed: ");
-    for diff in diff::lines(&old_usage, &new_usage) {
+    for diff in diff::lines(&old_usage, new_usage) {
         match diff {
             diff::Result::Left(line) => println!("-{line}"),
             diff::Result::Both(line, _) => println!(" {line}"),

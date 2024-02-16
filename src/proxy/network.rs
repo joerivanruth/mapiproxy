@@ -11,13 +11,16 @@ use std::{
 #[cfg(unix)]
 use std::{fs, path::Path};
 
-use mio::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use mio::net::{SocketAddr as UnixSocketAddr, UnixListener, UnixStream};
+use mio::net::{TcpListener, TcpStream};
 
 #[cfg(not(unix))]
 fn unix_not_supported() -> io::Error {
-    io::Error::new(ErrorKind::Unsupported, "Unix Domain sockets are not supported on this system")
+    io::Error::new(
+        ErrorKind::Unsupported,
+        "Unix Domain sockets are not supported on this system",
+    )
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -173,7 +176,7 @@ impl Addr {
                 MioListener::Unix(listener)
             }
             #[cfg(not(unix))]
-            Addr::Unix(_) => return Err(unix_not_supported())
+            Addr::Unix(_) => return Err(unix_not_supported()),
         };
         Ok(listener)
     }
@@ -184,7 +187,7 @@ impl Addr {
             #[cfg(unix)]
             Addr::Unix(a) => MioStream::Unix(UnixStream::connect(a)?),
             #[cfg(not(unix))]
-            Addr::Unix(_) => return Err(unix_not_supported())
+            Addr::Unix(_) => return Err(unix_not_supported()),
         };
         Ok(conn)
     }
