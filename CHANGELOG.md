@@ -5,6 +5,9 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
+
+## mapiproxy 0.5.0 - 2024-02-16
+
 The basics work:
 
 - Listen on TCP sockets and Unix Domain sockets
