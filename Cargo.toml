@@ -12,9 +12,6 @@ readme = "README.md"
 homepage = "https://github.com/joerivanruth/mapiproxy"
 repository = "https://github.com/joerivanruth/mapiproxy"
 
-# Installing from crates.io does not quite work yet.
-publish = false
-
 
 edition = "2021"
 default-run = "mapiproxy"

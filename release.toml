@@ -9,9 +9,6 @@ pre-release-commit-message = "Release {{crate_name}} version {{version}}"
 tag = true
 tag-message = "Release {{crate_name}} {{version}}"
 
-# do not publish to crates.io, also see publish = false at the top
-publish = false
-
 [[pre-release-replacements]]
 file = "CHANGELOG.md"
 search = "## mapiproxy NEXTVERSION - .*"
