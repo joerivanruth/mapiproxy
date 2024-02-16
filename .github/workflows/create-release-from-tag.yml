@@ -12,6 +12,8 @@ jobs:
   prepare:
     name: Prepare for release
     runs-on: ubuntu-latest
+    outputs:
+      mapiproxy_version: ${{ steps.version_number.outputs.mapiproxy_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +23,7 @@ jobs:
         run: cargo build --example x
 
       - name: Determine version number
+        id: version_number
         run: cargo run --example x -- version mapiproxy_version= >>"$GITHUB_OUTPUT"
 
       - name: Verify tag name against version number
