@@ -5,20 +5,22 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
-- The use of colors can now be configured with --color=always|never|auto.
+- Add option --color=always|never|auto to control the use of color escapes.
+  'Auto' is 'on' on terminals, 'off' otherwise.
 
 - Colorize text, digits and whitespace in binary output. This makes it easier
   to match the hex codes on the left to the characters on the right.
 
-- Raw IPv6 addresses are now allowed in LISTEN_ADDR and FORWARD_ADDR: `[::1]:50000`.
+- Support raw IPv6 addresses in LISTEN_ADDR and FORWARD_ADDR, between square brackets.
+  For example, `[::1]:50000`.
 
 - Clean up Unix sockets when Control-C is pressed.
 
 
 ## mapiproxy 0.5.1 - 2024-02-16
 
-- no user visible changes, release only because v0.5.1-alpha.1
-  exists on crates.io.
+- This release only exists because a version v0.5.1-alpha.1
+  was uploaded to crates.io as an experiment.
 
 
 ## mapiproxy 0.5.0 - 2024-02-16
