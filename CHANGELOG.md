@@ -5,6 +5,9 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
+
+## mapiproxy 0.5.2 - 2024-02-21
+
 - Add option --color=always|never|auto to control the use of color escapes.
   'Auto' is 'on' on terminals, 'off' otherwise.
 
