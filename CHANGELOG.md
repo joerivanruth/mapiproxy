@@ -7,6 +7,9 @@ What changed in mapiproxy, per version
 
 - The use of colors can now be configured with --color=always|never|auto.
 
+- Colorize text, digits and whitespace in binary output. This makes it easier
+  to match the hex codes on the left to the characters on the right.
+
 - Raw IPv6 addresses are now allowed in LISTEN_ADDR and FORWARD_ADDR: `[::1]:50000`.
 
 - Clean up Unix sockets when Control-C is pressed.

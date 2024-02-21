@@ -379,7 +379,16 @@ impl Binary {
         }
     }
 
-    fn add(&mut self, byte: u8, style: Style, renderer: &mut Renderer) -> io::Result<()> {
+    fn add(&mut self, byte: u8, mut style: Style, renderer: &mut Renderer) -> io::Result<()> {
+        if style == Style::Normal {
+            style = match byte {
+                b'0'..=b'9' => Style::Digit,
+                b'a'..=b'z' | b'A'..=b'Z' => Style::Letter,
+                b' ' | b'\t' | b'\r' | b'\n' => Style::Whitespace,
+                _ => style,
+            }
+        }
+
         self.row[self.col] = (byte, style);
         self.col += 1;
 
@@ -472,7 +481,8 @@ impl Binary {
     fn readable(byte: &[u8; 1]) -> &[u8] {
         // note that the readable range does not include 0x7f (DEL)
         let s = match byte[0] {
-            b' '..=0x7e => return byte.as_ref(),
+            b' ' => "·",
+            0x21..=0x7e => return byte.as_ref(),
             b'\n' => "↵",
             b'\t' => "→",
             0 => "░",

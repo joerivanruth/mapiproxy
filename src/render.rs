@@ -133,12 +133,18 @@ impl Renderer {
     }
 
     fn write_style(&mut self, style: Style) -> io::Result<()> {
+        // Black=30 Red=31 Green=32 Yellow=33 Blue=34 Magenta=35 Cyan=36 White=37
+
         let escape_sequence = match style {
-            Style::Normal => "\u{1b}[m",
-            Style::Header => "\u{1b}[1m",
-            Style::Frame => "\u{1b}[36m",
-            Style::Error => "\u{1b}[31m",
+            Style::Normal => "",
+            Style::Header => "\u{1b}[1m",          // bold
+            Style::Frame => "\u{1b}[36m",          // cyan
+            Style::Error => "\u{1b}[1m\u{1b}[31m", // bold red
+            Style::Whitespace => "\u{1b}[31m",     // red
+            Style::Digit => "\u{1b}[32m",          // green
+            Style::Letter => "\u{1b}[34m",         // blue
         };
+        self.out.write_all(b"\x1b[m")?; // NORMAL
         self.out.write_all(escape_sequence.as_bytes())?;
         Ok(())
     }
@@ -178,4 +184,7 @@ pub enum Style {
     Error,
     Frame,
     Header,
+    Whitespace,
+    Digit,
+    Letter,
 }
