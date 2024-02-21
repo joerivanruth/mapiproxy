@@ -23,6 +23,7 @@ anyhow = "1.0.79"
 argsplitter = "0.5.0"
 is-terminal = "0.4.12"
 itertools = "0.12.1"
+lazy-regex = "3.1.0"
 mio = { version = "0.8.10", features = [ "net", "os-ext", "os-poll" ] }
 slab = "0.4.9"
 smallvec = { version = "1.13.1", features = [ "union" ] }

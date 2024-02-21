@@ -7,6 +7,8 @@ What changed in mapiproxy, per version
 
 - The use of colors can now be configured with --color=always|never|auto.
 
+- Raw IPv6 addresses are now allowed in LISTEN_ADDR and FORWARD_ADDR: `[::1]:50000`.
+
 
 ## mapiproxy 0.5.1 - 2024-02-16
 

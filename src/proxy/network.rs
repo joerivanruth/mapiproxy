@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 
 use std::{
-    borrow::Cow,
     ffi::{OsStr, OsString},
     fmt::Display,
     io::{self, ErrorKind},
-    net::{self, SocketAddr as TcpSocketAddr, ToSocketAddrs},
+    net::{self, IpAddr, SocketAddr as TcpSocketAddr, ToSocketAddrs},
     path::PathBuf,
 };
 #[cfg(unix)]
 use std::{fs, path::Path};
 
+use lazy_regex::{regex_captures, regex_is_match};
 #[cfg(unix)]
 use mio::net::{SocketAddr as UnixSocketAddr, UnixListener, UnixStream};
 use mio::net::{TcpListener, TcpStream};
@@ -25,7 +25,8 @@ fn unix_not_supported() -> io::Error {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum MonetAddr {
-    Tcp { host: String, port: u16 },
+    Dns { host: String, port: u16 },
+    Ip { ip: IpAddr, port: u16 },
     Unix(PathBuf),
     PortOnly(u16),
 }
@@ -53,7 +54,16 @@ pub enum MioStream {
 impl Display for MonetAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MonetAddr::Tcp { host, port } => write!(f, "{host}:{port}"),
+            // MonetAddr::Tcp { host, port } => write!(f, "{host}:{port}"),
+            MonetAddr::Dns { host, port } => write!(f, "{host}:{port}"),
+            MonetAddr::Ip {
+                ip: IpAddr::V4(ip4),
+                port,
+            } => write!(f, "{ip4}:{port}"),
+            MonetAddr::Ip {
+                ip: IpAddr::V6(ip6),
+                port,
+            } => write!(f, "[{ip6}]:{port}"),
             MonetAddr::Unix(path) => path.display().fmt(f),
             MonetAddr::PortOnly(n) => n.fmt(f),
         }
@@ -63,41 +73,60 @@ impl Display for MonetAddr {
 impl TryFrom<&OsStr> for MonetAddr {
     type Error = io::Error;
 
-    fn try_from(os_value: &OsStr) -> Result<Self, Self::Error> {
-        let str_value = os_value.to_string_lossy();
+    fn try_from(os_value: &OsStr) -> Result<Self, io::Error> {
+        // this function does all the work but it returns Option rather
+        // than Result.
+        fn parse(os_value: &OsStr) -> Option<MonetAddr> {
+            // If it contains slashes or backslashes, it must be a path
+            let bytes = os_value.as_encoded_bytes();
+            if bytes.contains(&b'/') || bytes.contains(&b'\\') {
+                return Some(MonetAddr::Unix(os_value.into()));
+            }
 
-        let make_error = || {
-            io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("invalid address: {}", str_value),
-            )
-        };
+            // The other possibilities are all proper str's
+            let str_value = os_value.to_str()?;
 
-        // If it contains slashes or backslashes, it must be a path
-        let bytes = os_value.as_encoded_bytes();
-        if bytes.contains(&b'/') || bytes.contains(&b'\\') {
-            return Ok(MonetAddr::Unix(os_value.into()));
-        }
+            // If it's a number, it must be the port number.
+            if let Ok(port) = str_value.parse() {
+                return Some(MonetAddr::PortOnly(port));
+            }
 
-        // The other possibilities are all proper str's
-        let Cow::Borrowed(str_value) = str_value else {
-            return Err(make_error());
-        };
+            // it must end in :PORTNUMBER
+            let (_, host_part, port_part) = regex_captures!(r"^(.+):(\d+)$", str_value)?;
+            let port: u16 = port_part.parse().ok()?;
 
-        // If it's a number, it must be the port number.
-        if let Ok(port) = str_value.parse() {
-            return Ok(MonetAddr::PortOnly(port));
-        }
-
-        // If it ends in :DIGITS, it must be a host:port pair
-        if let Some(colon) = str_value.rfind(':') {
-            if let Ok(port) = str_value[colon + 1..].parse() {
-                let host = str_value[..colon].to_string();
-                return Ok(MonetAddr::Tcp { host, port });
+            // is the host IPv4, IPv6 or DNS?
+            if regex_is_match!(r"^\d+.\d+.\d+.\d+$", host_part) {
+                // IPv4
+                Some(MonetAddr::Ip {
+                    ip: IpAddr::V4(host_part.parse().ok()?),
+                    port,
+                })
+            } else if let Some((_, ip)) = regex_captures!(r"^\[([0-9a-f:]+)\]$"i, host_part) {
+                // IPv6
+                Some(MonetAddr::Ip {
+                    ip: IpAddr::V6(ip.parse().ok()?),
+                    port,
+                })
+            } else if regex_is_match!(r"^[a-z0-9][-a-z0-9.]*$"i, host_part) {
+                // names consisting of letters, digits and hyphens, separated or terminated by periods
+                Some(MonetAddr::Dns {
+                    host: host_part.to_string(),
+                    port,
+                })
+            } else {
+                None
             }
         }
 
-        Err(make_error())
+        if let Some(monetaddr) = parse(os_value) {
+            Ok(monetaddr)
+        } else {
+            Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("invalid address: {}", os_value.to_string_lossy()),
+            ))
+        }
     }
 }
 
@@ -118,20 +147,22 @@ impl MonetAddr {
     }
 
     pub fn resolve_tcp(&self) -> io::Result<Vec<Addr>> {
-        let (host, port) = match self {
-            MonetAddr::Unix(_) => return Ok(vec![]),
-            MonetAddr::Tcp { host, port } => (host.as_str(), *port),
-            MonetAddr::PortOnly(port) => ("localhost", *port),
-        };
-        let resolved = (host, port).to_socket_addrs()?;
-        let addrs = resolved.into_iter().map(Addr::Tcp).collect();
-        Ok(addrs)
+        fn gather<T: ToSocketAddrs>(a: T) -> io::Result<Vec<Addr>> {
+            Ok(a.to_socket_addrs()?.map(Addr::Tcp).collect())
+        }
+
+        match self {
+            MonetAddr::Unix(_) => Ok(vec![]),
+            MonetAddr::Dns { host, port } => gather((host.as_str(), *port)),
+            MonetAddr::Ip { ip, port } => gather((*ip, *port)),
+            MonetAddr::PortOnly(port) => gather(("localhost", *port)),
+        }
     }
 
     pub fn resolve_unix(&self) -> io::Result<Vec<Addr>> {
         if cfg!(unix) {
             let path = match self {
-                MonetAddr::Tcp { .. } => return Ok(vec![]),
+                MonetAddr::Dns { .. } | MonetAddr::Ip { .. } => return Ok(vec![]),
                 MonetAddr::Unix(p) => p.clone(),
                 MonetAddr::PortOnly(port) => PathBuf::from(format!("/tmp/.s.monetdb.{port}")),
             };
