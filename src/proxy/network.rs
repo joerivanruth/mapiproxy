@@ -7,6 +7,8 @@ use std::{
     net::{self, IpAddr, SocketAddr as TcpSocketAddr, ToSocketAddrs},
     path::PathBuf,
 };
+
+// These are only used by Unix Domain socket code
 #[cfg(unix)]
 use std::{fs, path::Path};
 
@@ -312,16 +314,16 @@ impl MioListener {
 
 impl Drop for MioListener {
     fn drop(&mut self) {
-        let MioListener::Unix(listener) = self else {
-            return;
-        };
-        let Ok(unix_sock_addr) = listener.local_addr() else {
-            return;
-        };
-        let Some(path) = unix_sock_addr.as_pathname() else {
-            return;
-        };
-        let _ = fs::remove_file(path);
+        #[cfg(unix)]
+        if let MioListener::Unix(listener) = self {
+            let Ok(unix_sock_addr) = listener.local_addr() else {
+                return;
+            };
+            let Some(path) = unix_sock_addr.as_pathname() else {
+                return;
+            };
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
