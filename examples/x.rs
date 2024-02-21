@@ -151,9 +151,8 @@ fn checkreadme(mut args: impl Iterator<Item = String>) -> AResult<()> {
         return Ok(());
     }
 
-    println!("{old_usage:?}");
-
-    println!("Usage information has changed: ");
+    println!();
+    println!("USAGE INFORMATION HAS CHANGED: ");
     for diff in diff::lines(&old_usage, new_usage) {
         match diff {
             diff::Result::Left(line) => println!("-{line}"),
