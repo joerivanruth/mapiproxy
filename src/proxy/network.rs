@@ -310,6 +310,21 @@ impl MioListener {
     }
 }
 
+impl Drop for MioListener {
+    fn drop(&mut self) {
+        let MioListener::Unix(listener) = self else {
+            return;
+        };
+        let Ok(unix_sock_addr) = listener.local_addr() else {
+            return;
+        };
+        let Some(path) = unix_sock_addr.as_pathname() else {
+            return;
+        };
+        let _ = fs::remove_file(path);
+    }
+}
+
 impl mio::event::Source for MioStream {
     fn register(
         &mut self,

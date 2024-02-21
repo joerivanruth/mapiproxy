@@ -9,6 +9,8 @@ What changed in mapiproxy, per version
 
 - Raw IPv6 addresses are now allowed in LISTEN_ADDR and FORWARD_ADDR: `[::1]:50000`.
 
+- Clean up Unix sockets when Control-C is pressed.
+
 
 ## mapiproxy 0.5.1 - 2024-02-16
 

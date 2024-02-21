@@ -21,6 +21,7 @@ default-run = "mapiproxy"
 [dependencies]
 anyhow = "1.0.79"
 argsplitter = "0.5.0"
+ctrlc = "3.4.2"
 is-terminal = "0.4.12"
 itertools = "0.12.1"
 lazy-regex = "3.1.0"

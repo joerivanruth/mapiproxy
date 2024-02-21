@@ -5,6 +5,7 @@ pub mod network;
 use std::{
     io::{self, ErrorKind},
     ops::{ControlFlow, RangeFrom},
+    sync::Arc,
 };
 
 use forward::Forwarder;
@@ -54,6 +55,7 @@ pub struct Proxy {
     listen_addr: MonetAddr,
     forward_addr: MonetAddr,
     poll: Poll,
+    waker: Arc<mio::Waker>,
     token_base: usize,
     listeners: Vec<(Addr, MioListener)>,
     forwarders: Slab<Forwarder>,
@@ -62,16 +64,22 @@ pub struct Proxy {
 }
 
 impl Proxy {
+    const TRIGGER_SHUTDOWN_TOKEN: Token = Token(usize::MAX);
+
     pub fn new(
         listen_addr: MonetAddr,
         forward_addr: MonetAddr,
         event_sink: EventSink,
     ) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
+        let waker = mio::Waker::new(poll.registry(), Self::TRIGGER_SHUTDOWN_TOKEN)
+            .map_err(Error::CreatePoll)?;
+        let waker = Arc::new(waker);
         let mut proxy = Proxy {
             listen_addr,
             forward_addr,
             poll,
+            waker,
             token_base: usize::MAX,
             listeners: Default::default(),
             forwarders: Default::default(),
@@ -121,7 +129,7 @@ impl Proxy {
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<Proxy> {
+    pub fn run(&mut self) -> Result<()> {
         let mut events = Events::with_capacity(20);
         let mut _i = 0u64;
         loop {
@@ -134,13 +142,24 @@ impl Proxy {
             }
             for ev in events.iter() {
                 let token = ev.token();
-                if token.0 < self.token_base {
+                if token == Self::TRIGGER_SHUTDOWN_TOKEN {
+                    return Ok(());
+                } else if token.0 < self.token_base {
                     self.handle_listener_event(token.0)?;
                 } else {
                     self.handle_forward_event(ev, (token.0 - self.token_base) / 2);
                 }
             }
         }
+    }
+
+    pub fn get_shutdown_trigger(&mut self) -> Box<dyn Fn() + Send + Sync + 'static> {
+        let waker = Arc::clone(&self.waker);
+        Box::new(move || {
+            if let Err(e) = waker.wake() {
+                eprintln!("Failed to shut down the proxy: {e}");
+            }
+        })
     }
 
     fn handle_listener_event(&mut self, n: usize) -> Result<()> {

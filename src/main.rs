@@ -8,7 +8,7 @@ use std::panic::PanicInfo;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
 
-use anyhow::{bail, Result as AResult};
+use anyhow::{bail, Context, Result as AResult};
 use argsplitter::{ArgError, ArgSplitter};
 
 use crate::{
@@ -79,14 +79,28 @@ fn mymain() -> AResult<()> {
         let _ = send_events.send(event);
     });
     let mut proxy = Proxy::new(listen_addr, forward_addr, sink)?;
+    install_ctrl_c_handler(proxy.get_shutdown_trigger())?;
     thread::spawn(move || proxy.run().unwrap());
 
     let renderer: &mut Renderer = &mut renderer;
     let mut state = mapi::State::new(level, force_binary);
-    loop {
-        let ev = receive_events.recv()?;
+    while let Ok(ev) = receive_events.recv() {
         state.handle(&ev, renderer)?;
     }
+    Ok(())
+}
+
+fn install_ctrl_c_handler(trigger: Box<dyn Fn() + Send + Sync>) -> AResult<()> {
+    let mut triggered = false;
+    let handler = move || {
+        if triggered {
+            std::process::exit(1);
+        }
+        triggered = true;
+        trigger()
+    };
+    ctrlc::set_handler(handler).with_context(|| "cannot set Ctrl-C handler")?;
+    Ok(())
 }
 
 fn install_panic_hook() {
