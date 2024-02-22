@@ -1,10 +1,13 @@
 #![doc = include_str!("../README.md")]
 
 mod mapi;
+mod pcap;
 mod proxy;
 mod render;
 
+use std::fs::File;
 use std::panic::PanicInfo;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
 
@@ -28,13 +31,23 @@ enum Level {
     Messages,
 }
 
-pub fn main() -> ExitCode {
+#[derive(Debug)]
+enum Source {
+    Proxy {
+        listen_addr: MonetAddr,
+        forward_addr: MonetAddr,
+    },
+    Pcap(PathBuf),
+}
+
+fn main() -> ExitCode {
     argsplitter::main_support::report_errors(USAGE, mymain())
 }
 
 fn mymain() -> AResult<()> {
     install_panic_hook();
 
+    let mut pcap_file: Option<PathBuf> = None;
     let mut level = None;
     let mut force_binary = false;
     let mut colored = None;
@@ -42,6 +55,7 @@ fn mymain() -> AResult<()> {
     let mut args = ArgSplitter::from_env();
     while let Some(flag) = args.flag()? {
         match flag {
+            "--pcap" => pcap_file = Some(args.param_os()?.into()),
             "-m" | "--messages" => level = Some(Level::Messages),
             "-b" | "--blocks" => level = Some(Level::Blocks),
             "-r" | "--raw" => level = Some(Level::Raw),
@@ -71,8 +85,17 @@ fn mymain() -> AResult<()> {
         return Err(ArgError::message("Please set the mode using -r, -b or -m").into());
     };
 
-    let listen_addr = args.stashed_os("LISTEN_ADDR")?.try_into()?;
-    let forward_addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
+    let source = if let Some(path) = pcap_file {
+        Source::Pcap(path)
+    } else {
+        let listen_addr = args.stashed_os("LISTEN_ADDR")?.try_into()?;
+        let forward_addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
+        Source::Proxy {
+            listen_addr,
+            forward_addr,
+        }
+    };
+
     args.no_more_stashed()?;
 
     let out = io::stdout();
@@ -81,7 +104,15 @@ fn mymain() -> AResult<()> {
 
     let mapi_state = mapi::State::new(level, force_binary);
 
-    run_proxy(listen_addr, forward_addr, mapi_state, &mut renderer)
+    match source {
+        Source::Proxy { listen_addr, forward_addr } => run_proxy(listen_addr, forward_addr, mapi_state, &mut renderer),
+        Source::Pcap(path) => {
+            let Ok(r) = File::open(&path) else {
+                bail!("Could not open pcap file {}", path.display());
+            };
+            pcap::parse_pcap_file(r, mapi_state)
+        }
+    }
 }
 
 fn run_proxy(
