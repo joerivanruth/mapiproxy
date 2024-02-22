@@ -10,9 +10,10 @@ use std::{io, panic, process, thread};
 
 use anyhow::{bail, Context, Result as AResult};
 use argsplitter::{ArgError, ArgSplitter};
+use proxy::network::MonetAddr;
 
 use crate::{
-    proxy::{event::EventSink, network::MonetAddr, Proxy},
+    proxy::{event::EventSink, Proxy},
     render::Renderer,
 };
 
@@ -69,26 +70,36 @@ fn mymain() -> AResult<()> {
     let Some(level) = level else {
         return Err(ArgError::message("Please set the mode using -r, -b or -m").into());
     };
-    let listen_addr: MonetAddr = args.stashed_os("LISTEN_ADDR")?.try_into()?;
-    let forward_addr: MonetAddr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
+
+    let listen_addr = args.stashed_os("LISTEN_ADDR")?.try_into()?;
+    let forward_addr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
 
     let out = io::stdout();
     let colored = colored.unwrap_or_else(|| is_terminal::is_terminal(&out));
     let mut renderer = Renderer::new(colored, out);
 
+    let mapi_state = mapi::State::new(level, force_binary);
+
+    run_proxy(listen_addr, forward_addr, mapi_state, &mut renderer)
+}
+
+fn run_proxy(
+    listen_addr: MonetAddr,
+    forward_addr: MonetAddr,
+    mut mapi_state: mapi::State,
+    renderer: &mut Renderer,
+) -> AResult<()> {
     let (send_events, receive_events) = std::sync::mpsc::sync_channel(500);
-    let sink = EventSink::new(move |event| {
+    let eventsink = EventSink::new(move |event| {
         let _ = send_events.send(event);
     });
-    let mut proxy = Proxy::new(listen_addr, forward_addr, sink)?;
+    let mut proxy = Proxy::new(listen_addr, forward_addr, eventsink)?;
     install_ctrl_c_handler(proxy.get_shutdown_trigger())?;
     thread::spawn(move || proxy.run().unwrap());
 
-    let renderer: &mut Renderer = &mut renderer;
-    let mut state = mapi::State::new(level, force_binary);
     while let Ok(ev) = receive_events.recv() {
-        state.handle(&ev, renderer)?;
+        mapi_state.handle(&ev, renderer)?;
     }
     Ok(())
 }
