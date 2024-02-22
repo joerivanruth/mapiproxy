@@ -26,6 +26,7 @@ is-terminal = "0.4.12"
 itertools = "0.12.1"
 lazy-regex = "3.1.0"
 mio = { version = "0.8.10", features = [ "net", "os-ext", "os-poll" ] }
+pcap-file = "2.0.0"
 slab = "0.4.9"
 smallvec = { version = "1.13.1", features = [ "union" ] }
 thiserror = "1.0.56"
