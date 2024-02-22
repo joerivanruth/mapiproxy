@@ -8,6 +8,9 @@ What changed in mapiproxy, per version
 
 ## mapiproxy 0.5.2 - 2024-02-21
 
+- No longer default to --messages. It's not clear what the default should
+  be so for the time being it's better to not have a default at all.
+
 - Add option --color=always|never|auto to control the use of color escapes.
   'Auto' is 'on' on terminals, 'off' otherwise.
 

@@ -34,16 +34,16 @@ pub fn main() -> ExitCode {
 fn mymain() -> AResult<()> {
     install_panic_hook();
 
-    let mut level = Level::Messages;
+    let mut level = None;
     let mut force_binary = false;
     let mut colored = None;
 
     let mut args = ArgSplitter::from_env();
     while let Some(flag) = args.flag()? {
         match flag {
-            "-m" | "--messages" => level = Level::Messages,
-            "-b" | "--blocks" => level = Level::Blocks,
-            "-r" | "--raw" => level = Level::Raw,
+            "-m" | "--messages" => level = Some(Level::Messages),
+            "-b" | "--blocks" => level = Some(Level::Blocks),
+            "-r" | "--raw" => level = Some(Level::Raw),
             "-B" | "--binary" => force_binary = true,
             "--color" => {
                 colored = match args.param()?.to_lowercase().as_str() {
@@ -66,6 +66,9 @@ fn mymain() -> AResult<()> {
             _ => return Err(ArgError::unknown_flag(flag).into()),
         }
     }
+    let Some(level) = level else {
+        return Err(ArgError::message("Please set the mode using -r, -b or -m").into());
+    };
     let listen_addr: MonetAddr = args.stashed_os("LISTEN_ADDR")?.try_into()?;
     let forward_addr: MonetAddr = args.stashed_os("FORWARD_ADDR")?.try_into()?;
     args.no_more_stashed()?;
