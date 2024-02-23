@@ -15,6 +15,7 @@ Usage:
 
 ```plain
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
+       mapiproxy [OPTIONS] --pcap PCAP_FILE
 
 LISTEN_ADDR and FORWARD_ADDR:
     port, for example, 50000
@@ -22,11 +23,14 @@ LISTEN_ADDR and FORWARD_ADDR:
     /path/to/unixsock, for example, /tmp/.s.monetdb.50000
 
 Options:
-    -m --messages       Dump whole messages (default)
+    -m --messages       Dump whole messages
     -b --blocks         Dump individual blocks
     -r --raw            Dump bytes as they come in
     -B --binary         Force dumping as binary
     --color=WHEN        Colorize output, one of 'always', 'auto' or 'never'
     --help              This help
     --version           Version info
+
+Experimental options:
+    --pcap=FILE         Read network capture data from FILE, use - for stdin
 ```

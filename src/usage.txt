@@ -1,5 +1,5 @@
 Usage: mapiproxy [OPTIONS] LISTEN_ADDR FORWARD_ADDR
-Usage: mapiproxy [OPTIONS] --pcap PCAP_FILE
+       mapiproxy [OPTIONS] --pcap PCAP_FILE
 
 LISTEN_ADDR and FORWARD_ADDR:
     port, for example, 50000
