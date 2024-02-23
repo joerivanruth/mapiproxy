@@ -15,7 +15,7 @@ use pcap_file::{
 use self::mybufread::MyBufReader;
 pub use self::tracker::Tracker;
 
-pub fn parse_pcap_file(mut rd: impl io::Read + 'static, tracker: &mut Tracker) -> AResult<()> {
+pub fn parse_pcap_file(mut rd: impl io::Read, tracker: &mut Tracker) -> AResult<()> {
     // read ahead to inspect the file header
     let mut signature = [0u8; 4];
     rd.read_exact(&mut signature)?;

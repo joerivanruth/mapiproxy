@@ -133,12 +133,22 @@ fn run_proxy(
 }
 
 fn run_pcap(path: &Path, mut mapi_state: mapi::State, renderer: &mut Renderer) -> AResult<()> {
-    let Ok(r) = File::open(path) else {
-        bail!("Could not open pcap file {}", path.display());
+    let mut owned_file;
+    let mut owned_stdin;
+
+    let reader: &mut dyn io::Read = if path == Path::new("-") {
+        owned_stdin = Some(io::stdin().lock());
+        owned_stdin.as_mut().unwrap()
+    } else {
+        let file = File::open(path)
+            .with_context(|| format!("Could not open pcap file {}", path.display()))?;
+        owned_file = Some(file);
+        owned_file.as_mut().unwrap()
     };
+
     let handler = |ev: MapiEvent| mapi_state.handle(&ev, renderer);
     let mut tracker = Tracker::new(handler);
-    pcap::parse_pcap_file(r, &mut tracker)
+    pcap::parse_pcap_file(reader, &mut tracker)
 }
 
 fn install_ctrl_c_handler(trigger: Box<dyn Fn() + Send + Sync>) -> AResult<()> {
