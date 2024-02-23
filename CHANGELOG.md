@@ -8,6 +8,10 @@ What changed in mapiproxy, per version
 - No longer default to --messages. It's not clear what the default should
   be so for the time being it's better to not have a default at all.
 
+- Add experimental `--pcap=FILE` option to read captured network traffic files
+  written by for example, [tcpdump](https://www.tcpdump.org/).
+  So far tqhis has seen very limited testing.
+
 
 ## mapiproxy 0.5.2 - 2024-02-21
 
