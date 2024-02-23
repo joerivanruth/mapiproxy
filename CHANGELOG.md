@@ -5,6 +5,9 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
+
+## mapiproxy 0.6.0 - 2024-02-23
+
 - No longer default to --messages. It's not clear what the default should
   be so for the time being it's better to not have a default at all.
 
