@@ -7,19 +7,17 @@ mod render;
 
 use std::fs::File;
 use std::panic::PanicInfo;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{io, panic, process, thread};
 
 use anyhow::{bail, Context, Result as AResult};
 use argsplitter::{ArgError, ArgSplitter};
 use pcap::Tracker;
+use proxy::event::MapiEvent;
 use proxy::network::MonetAddr;
 
-use crate::{
-    proxy::{event::EventSink, Proxy},
-    render::Renderer,
-};
+use crate::{proxy::Proxy, render::Renderer};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -106,14 +104,11 @@ fn mymain() -> AResult<()> {
     let mapi_state = mapi::State::new(level, force_binary);
 
     match source {
-        Source::Proxy { listen_addr, forward_addr } => run_proxy(listen_addr, forward_addr, mapi_state, &mut renderer),
-        Source::Pcap(path) => {
-            let Ok(r) = File::open(&path) else {
-                bail!("Could not open pcap file {}", path.display());
-            };
-            let mut tracker = Tracker::new(mapi_state, &mut renderer);
-            pcap::parse_pcap_file(r, &mut tracker)
-        }
+        Source::Proxy {
+            listen_addr,
+            forward_addr,
+        } => run_proxy(listen_addr, forward_addr, mapi_state, &mut renderer),
+        Source::Pcap(path) => run_pcap(&path, mapi_state, &mut renderer),
     }
 }
 
@@ -124,10 +119,10 @@ fn run_proxy(
     renderer: &mut Renderer,
 ) -> AResult<()> {
     let (send_events, receive_events) = std::sync::mpsc::sync_channel(500);
-    let eventsink = EventSink::new(move |event| {
+    let handler = move |event| {
         let _ = send_events.send(event);
-    });
-    let mut proxy = Proxy::new(listen_addr, forward_addr, eventsink)?;
+    };
+    let mut proxy = Proxy::new(listen_addr, forward_addr, handler)?;
     install_ctrl_c_handler(proxy.get_shutdown_trigger())?;
     thread::spawn(move || proxy.run().unwrap());
 
@@ -135,6 +130,15 @@ fn run_proxy(
         mapi_state.handle(&ev, renderer)?;
     }
     Ok(())
+}
+
+fn run_pcap(path: &Path, mut mapi_state: mapi::State, renderer: &mut Renderer) -> AResult<()> {
+    let Ok(r) = File::open(path) else {
+        bail!("Could not open pcap file {}", path.display());
+    };
+    let handler = |ev: MapiEvent| mapi_state.handle(&ev, renderer);
+    let mut tracker = Tracker::new(handler);
+    pcap::parse_pcap_file(r, &mut tracker)
 }
 
 fn install_ctrl_c_handler(trigger: Box<dyn Fn() + Send + Sync>) -> AResult<()> {

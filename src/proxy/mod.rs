@@ -16,7 +16,7 @@ use slab::Slab;
 use thiserror::Error as ThisError;
 
 use self::{
-    event::{ConnectionId, EventSink},
+    event::{ConnectionId, EventSink, MapiEvent},
     network::{MioListener, MioStream, MonetAddr},
 };
 
@@ -69,7 +69,7 @@ impl Proxy {
     pub fn new(
         listen_addr: MonetAddr,
         forward_addr: MonetAddr,
-        event_sink: EventSink,
+        event_handler: impl FnMut(MapiEvent) + 'static + Send,
     ) -> Result<Proxy> {
         let poll = Poll::new().map_err(Error::CreatePoll)?;
         let waker = mio::Waker::new(poll.registry(), Self::TRIGGER_SHUTDOWN_TOKEN)
@@ -84,7 +84,7 @@ impl Proxy {
             listeners: Default::default(),
             forwarders: Default::default(),
             ids: 10..,
-            event_sink,
+            event_sink: EventSink::new(event_handler),
         };
 
         proxy.add_listeners()?;

@@ -1,11 +1,16 @@
 mod mybufread;
+mod tcp;
 mod tracker;
 
 use std::io;
 
 use anyhow::{bail, Result as AResult};
 
-use pcap_file::{pcap::PcapReader, DataLink};
+use pcap_file::{
+    pcap::PcapReader,
+    pcapng::{Block, PcapNgReader},
+    DataLink,
+};
 
 use self::mybufread::MyBufReader;
 pub use self::tracker::Tracker;
@@ -38,7 +43,7 @@ pub fn parse_pcap_file(mut rd: impl io::Read + 'static, tracker: &mut Tracker) -
 }
 
 fn parse_legacy_pcap(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
-    let mut pcap_reader = PcapReader::new(rd).unwrap();
+    let mut pcap_reader = PcapReader::new(rd)?;
 
     let header = pcap_reader.header();
 
@@ -54,8 +59,28 @@ fn parse_legacy_pcap(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
     Ok(())
 }
 
-fn parse_pcap_ng(_rd: MyBufReader, _tracker: &mut Tracker) -> AResult<()> {
-    bail!("Support for PCAP-NG to be added soon");
+fn parse_pcap_ng(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
+    let mut pcapng_reader = PcapNgReader::new(rd)?;
+    let mut linktype = None;
+
+    while let Some(block) = pcapng_reader.next_block() {
+        let data = match block? {
+            Block::InterfaceDescription(iface) => {
+                linktype = Some(iface.linktype);
+                continue;
+            }
+            Block::Packet(packet) => packet.data,
+            Block::SimplePacket(packet) => packet.data,
+            Block::EnhancedPacket(packet) => packet.data,
+            _ => continue,
+        };
+
+        if let Some(lt) = linktype {
+            process_packet(lt, &data, tracker)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn process_packet(linktype: DataLink, data: &[u8], tracker: &mut Tracker) -> AResult<()> {
