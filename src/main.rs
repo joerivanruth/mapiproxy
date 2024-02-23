@@ -13,6 +13,7 @@ use std::{io, panic, process, thread};
 
 use anyhow::{bail, Context, Result as AResult};
 use argsplitter::{ArgError, ArgSplitter};
+use pcap::Tracker;
 use proxy::network::MonetAddr;
 
 use crate::{
@@ -110,7 +111,8 @@ fn mymain() -> AResult<()> {
             let Ok(r) = File::open(&path) else {
                 bail!("Could not open pcap file {}", path.display());
             };
-            pcap::parse_pcap_file(r, mapi_state)
+            let mut tracker = Tracker::new(mapi_state, &mut renderer);
+            pcap::parse_pcap_file(r, &mut tracker)
         }
     }
 }
