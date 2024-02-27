@@ -15,6 +15,8 @@ use pcap_file::{
 use self::mybufread::MyBufReader;
 pub use self::tracker::Tracker;
 
+/// Parse PCAP records from the reader and hand the packets to the Tracker. This
+/// function works with both the old-style PCAP and with PCAP-NG file formats.
 pub fn parse_pcap_file(mut rd: impl io::Read, tracker: &mut Tracker) -> AResult<()> {
     // read ahead to inspect the file header
     let mut signature = [0u8; 4];
@@ -42,6 +44,7 @@ pub fn parse_pcap_file(mut rd: impl io::Read, tracker: &mut Tracker) -> AResult<
     }
 }
 
+/// Parse the file as legacy PCAP and pass the packets to [process_packet]
 fn parse_legacy_pcap(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
     let mut pcap_reader = PcapReader::new(rd)?;
 
@@ -59,8 +62,13 @@ fn parse_legacy_pcap(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
     Ok(())
 }
 
+/// Parse the file as PCAP-NG and pass the packets to [process_packet]
 fn parse_pcap_ng(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
     let mut pcapng_reader = PcapNgReader::new(rd)?;
+
+    // With PCAP-NG the linktype is not a file-global setting but it is set and
+    // can theoretically be changed mid-file using Interface Description blocks.
+    // This mutable holds the latest value we have seen.
     let mut linktype = None;
 
     while let Some(block) = pcapng_reader.next_block() {
@@ -75,6 +83,8 @@ fn parse_pcap_ng(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
             _ => continue,
         };
 
+        // Broken files might contain packets before the first interface description block.
+        // Ignore them.
         if let Some(lt) = linktype {
             process_packet(lt, &data, tracker)?;
         }
@@ -83,7 +93,11 @@ fn parse_pcap_ng(rd: MyBufReader, tracker: &mut Tracker) -> AResult<()> {
     Ok(())
 }
 
+/// This function is called from both [parse_legacy_pcap] and [parse_pcap_ng]
+/// for each packet in the file.
 fn process_packet(linktype: DataLink, data: &[u8], tracker: &mut Tracker) -> AResult<()> {
+    // We expect to read ethernet frames but it's also possible for pcap files to
+    // capture at the IP level. Right now we only support Ethernet.
     match linktype {
         DataLink::ETHERNET => tracker.process_ethernet(data),
         _ => bail!("pcap file contains packet of type {linktype:?}, this is not supported"),

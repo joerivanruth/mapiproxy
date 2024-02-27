@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     ffi::{OsStr, OsString},
     fmt::Display,
@@ -286,10 +284,12 @@ impl mio::event::Source for MioListener {
 }
 
 impl MioListener {
+    #[allow(dead_code)]
     pub fn is_tcp(&self) -> bool {
         matches!(self, Self::Tcp(_))
     }
 
+    #[allow(dead_code)]
     pub fn is_unix(&self) -> bool {
         !self.is_tcp()
     }
@@ -408,6 +408,7 @@ impl MioStream {
         }
     }
 
+    #[allow(dead_code)]
     pub fn peer_addr(&self) -> io::Result<Addr> {
         let addr = match self {
             MioStream::Tcp(s) => s.peer_addr()?.into(),
