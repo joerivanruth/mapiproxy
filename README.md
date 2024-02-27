@@ -89,7 +89,7 @@ or they display it as text, like this:
 │;↵
 └
 ```
-Mapi generally prefers text output over binary, but will render a frame in
+Mapiproxy generally prefers text output over binary, but will render a frame in
 binary when at least one of the following conditions holds true:
 
 * the data is not valid UTF-8 encoded text
@@ -105,10 +105,16 @@ and prints them at in a single frame, skipping the block headers. In `--blocks`
 mode, it collects whole blocks and prints one block per frame, also without the
 block header.
 
-In `--raw` mode, bytes are printed as they are received, including the block
+Because of the above rules it may happen in `--blocks` modr that a
+multi-byte character spans across a block boundary. In that case both
+blocks are considered to be not valid UTF-8 encoded text so they will
+be displayed in binary even though other blocks in the message are
+still rendered as text.
+
+In `--raw` mode, all bytes are printed as they are received, including the block
 headers. This means that a single printed chunk may contain parts of multiple
-blocks and even parts of multiple messages. Conversely, a block or message may
-be spread across multiple chunks of received bytes.
+blocks and even parts of multiple messages. Conversely, a block or message is
+often spread across multiple chunks of received bytes.
 
 The `--raw` mode is the only mode in which block headers are included in the
 output. They are marked with angle brackets '⟨' and '⟩'. For example:
