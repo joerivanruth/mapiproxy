@@ -9,8 +9,8 @@ license = "MPL-2.0"
 
 # for now
 readme = "README.md"
-homepage = "https://github.com/joerivanruth/mapiproxy"
-repository = "https://github.com/joerivanruth/mapiproxy"
+homepage = "https://github.com/MonetDBSolutions/mapiproxy"
+repository = "https://github.com/MonetDBSolutions/mapiproxy"
 
 
 edition = "2021"
