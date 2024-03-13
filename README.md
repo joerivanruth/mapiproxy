@@ -51,11 +51,13 @@ Pre-built binaries for x86-64 Linux, MacOS, and Windows are available on the
 GitHub repository.
 
 Mapiproxy is written in Rust. If you want to build from source and don't have
-the Rust compiler installed, you can obtain it from
+the Rust compiler installed, visit
 [rustup.rs](https://rustup.rs/).
 
-To build from source, simply execute `cargo install mapiproxy` or clone the
-repository from GitHub and build using `cargo build --release`.
+With Rust installed, simply execute `cargo install mapiproxy`.
+This will download the source, compile and install it.
+Alternatively, clone the repository from GitHub and build 
+using `cargo build --release`.
 
 
 Output Modes
@@ -101,7 +103,7 @@ binary when at least one of the following conditions holds true:
 * binary output is forced using the `-B` or `--binary` flag
 
 When Mapiproxy is in `--messages` mode, it collects all bytes of whole message
-and prints them at in a single frame, skipping the block headers. In `--blocks`
+and prints them as a single frame, skipping the block headers. In `--blocks`
 mode, it collects whole blocks and prints one block per frame, also without the
 block header.
 
@@ -130,8 +132,8 @@ output. They are marked with angle brackets '⟨' and '⟩'. For example:
 Special characters and color escapes
 ------------------------------------
 
-Mapiproxy output contains some non-ASCII Unicode characters, which currently
-cannot be disabled. While this is typically not an issue on Linux and MacOS,
+Mapiproxy output contains some non-ASCII Unicode characters. This cannot currently
+be disabled. While this is typically not problem on Linux and MacOS,
 users on Windows platforms may encounter issues. Please share you experiences.
 
 When writing to a terminal or when explicitly enabled with `--color=always`,

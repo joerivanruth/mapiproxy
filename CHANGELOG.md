@@ -5,6 +5,9 @@ What changed in mapiproxy, per version
 
 ## mapiproxy NEXTVERSION - YYYY-MM-DD
 
+- Upgrade mio dependency, it had a security issue.
+  Mapiproxy is not affected but we kept getting warnings.
+
 
 ## mapiproxy 0.6.0 - 2024-02-23
 
