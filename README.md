@@ -102,12 +102,12 @@ binary when at least one of the following conditions holds true:
 
 * binary output is forced using the `-B` or `--binary` flag
 
-When Mapiproxy is in `--messages` mode, it collects all bytes of whole message
+When Mapiproxy is in `--messages` mode, it collects all bytes of a whole message
 and prints them as a single frame, skipping the block headers. In `--blocks`
 mode, it collects whole blocks and prints one block per frame, also without the
 block header.
 
-Because of the above rules it may happen in `--blocks` modr that a
+Because of the above rules it may happen in `--blocks` mode that a
 multi-byte character spans across a block boundary. In that case both
 blocks are considered to be not valid UTF-8 encoded text so they will
 be displayed in binary even though other blocks in the message are
@@ -135,6 +135,15 @@ Special characters and color escapes
 Mapiproxy output contains some non-ASCII Unicode characters. This cannot currently
 be disabled. While this is typically not problem on Linux and MacOS,
 users on Windows platforms may encounter issues. Please share you experiences.
+
+This is a list of the non-ASCII characters used by Mapiproxy:
+
+| Character  | Meaning                               | When         |
+| ---------- | ------------------------------------- | ------------ |
+| ‣, ┌, └, │ | Frame boundary                        | always       |
+| ↵, →       | newline and tab                       | always       |
+| ⟨, ⟩       | block header markers                  | raw mode     |
+| ·, ░, ▒    | space, NUL byte, any unprintable byte | hexdump only |
 
 When writing to a terminal or when explicitly enabled with `--color=always`,
 Mapiproxy uses VT-100/ANSI color escape sequences for enhanced readability,
